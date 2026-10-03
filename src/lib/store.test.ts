@@ -2,6 +2,8 @@ import { describe, expect, test } from "vitest";
 import { createStore } from "./store";
 import type { StorageChange, StorageNamespace } from "./store";
 import type { Item } from "./model";
+import { HOUR } from "./model";
+import { isOverdue } from "./due";
 
 type Listener = (changes: Record<string, StorageChange>, areaName: string) => void;
 
@@ -577,5 +579,275 @@ describe("item action concurrency and storage shape", () => {
     expect(Object.keys(stored!).sort()).toEqual(
       ["bucketId", "id", "lastVisitedAt", "normUrl", "queuedAt", "riffle", "riffleEnteredAt", "title", "url"].sort(),
     );
+  });
+});
+
+describe("pauseNow", () => {
+  test("starts an open-ended pause at now", async () => {
+    const { clock, store } = createTestStore();
+    const pause = await store.pauseNow();
+    expect(pause).toEqual({ id: "id-0", start: clock.now(), end: null });
+    expect(await store.getPauses()).toEqual([pause]);
+  });
+
+  test("accepts a later end that schedules the resume", async () => {
+    const { clock, store } = createTestStore();
+    const end = clock.now() + HOUR;
+    const pause = await store.pauseNow(end);
+    expect(pause).toEqual({ id: "id-0", start: clock.now(), end });
+  });
+});
+
+describe("resume", () => {
+  test("sets end = now on the running pause", async () => {
+    const { clock, store } = createTestStore();
+    const started = await store.pauseNow();
+    clock.advance(5_000);
+    const resumed = await store.resume();
+    expect(resumed).toEqual({ ...started, end: clock.now() });
+    expect(await store.getPauses()).toEqual([resumed]);
+  });
+
+  test("does nothing when no pause is running", async () => {
+    const { storage, clock, store } = createTestStore();
+    await storage.local.set({
+      pauses: [{ id: "p1", start: clock.now() - 2 * HOUR, end: clock.now() - HOUR }],
+    });
+    const before = storage.peek("pauses");
+
+    const result = await store.resume();
+
+    expect(result).toBeNull();
+    expect(storage.peek("pauses")).toBe(before);
+  });
+});
+
+describe("addPause", () => {
+  test("a past range with an explicit end", async () => {
+    const { clock, store } = createTestStore();
+    const start = clock.now() - 2 * HOUR;
+    const end = clock.now() - HOUR;
+    const pause = await store.addPause({ start, end });
+    expect(pause).toEqual({ id: "id-0", start, end });
+    expect(await store.getPauses()).toEqual([pause]);
+  });
+
+  test("a past range until now", async () => {
+    const { clock, store } = createTestStore();
+    const start = clock.now() - HOUR;
+    const pause = await store.addPause({ start, end: clock.now() });
+    expect(pause).toEqual({ id: "id-0", start, end: clock.now() });
+  });
+
+  test("a scheduled future pause", async () => {
+    const { clock, store } = createTestStore();
+    const start = clock.now() + HOUR;
+    const end = clock.now() + 2 * HOUR;
+    const pause = await store.addPause({ start, end });
+    expect(pause).toEqual({ id: "id-0", start, end });
+    expect(await store.getPauses()).toEqual([pause]);
+  });
+
+  test("rejects a non-null end <= start, leaving stored pauses unchanged", async () => {
+    const { clock, store } = createTestStore();
+    await store.addPause({ start: clock.now() - HOUR, end: clock.now() });
+    const before = await store.getPauses();
+
+    await expect(store.addPause({ start: clock.now(), end: clock.now() })).rejects.toThrow();
+    await expect(
+      store.addPause({ start: clock.now(), end: clock.now() - HOUR }),
+    ).rejects.toThrow();
+
+    expect(await store.getPauses()).toEqual(before);
+  });
+});
+
+describe("editPause", () => {
+  test("changes start", async () => {
+    const { clock, store } = createTestStore();
+    const pause = await store.addPause({ start: clock.now() - 2 * HOUR, end: clock.now() - HOUR });
+    const start = clock.now() - 3 * HOUR;
+    const edited = await store.editPause(pause.id, { start });
+    expect(edited).toEqual({ ...pause, start });
+  });
+
+  test("changes end", async () => {
+    const { clock, store } = createTestStore();
+    const pause = await store.addPause({ start: clock.now() - 2 * HOUR, end: clock.now() - HOUR });
+    const end = clock.now();
+    const edited = await store.editPause(pause.id, { end });
+    expect(edited).toEqual({ ...pause, end });
+  });
+
+  test("changes label", async () => {
+    const { clock, store } = createTestStore();
+    const pause = await store.addPause({ start: clock.now() - 2 * HOUR, end: clock.now() - HOUR });
+    const edited = await store.editPause(pause.id, { label: "Lunch" });
+    expect(edited).toEqual({ ...pause, label: "Lunch" });
+  });
+
+  test("rejects a non-null end <= start, leaving stored pauses unchanged", async () => {
+    const { clock, store } = createTestStore();
+    const pause = await store.addPause({ start: clock.now() - 2 * HOUR, end: clock.now() - HOUR });
+    const before = await store.getPauses();
+
+    await expect(store.editPause(pause.id, { end: pause.start })).rejects.toThrow();
+
+    expect(await store.getPauses()).toEqual(before);
+  });
+});
+
+describe("deletePause", () => {
+  test("removes a pause by id", async () => {
+    const { clock, store } = createTestStore();
+    const pause = await store.addPause({ start: clock.now() - 2 * HOUR, end: clock.now() - HOUR });
+    await store.deletePause(pause.id);
+    expect(await store.getPauses()).toEqual([]);
+  });
+
+  test("rejects an unknown pause id", async () => {
+    const { store } = createTestStore();
+    await expect(store.deletePause("missing")).rejects.toThrow();
+  });
+});
+
+describe("pause merging on write", () => {
+  test("pauseNow merges with a pause that touches its start, keeping the earlier id, start and label", async () => {
+    const { clock, store } = createTestStore();
+    const earlier = await store.addPause({
+      start: clock.now() - HOUR,
+      end: clock.now(),
+      label: "Earlier",
+    });
+
+    const merged = await store.pauseNow();
+
+    expect(merged).toEqual({ id: earlier.id, start: earlier.start, end: null, label: "Earlier" });
+    expect(await store.getPauses()).toEqual([merged]);
+  });
+
+  test("addPause merges with an overlapping pause, taking the latest end", async () => {
+    const { clock, store } = createTestStore();
+    const first = await store.addPause({ start: clock.now() - 3 * HOUR, end: clock.now() - HOUR });
+
+    const merged = await store.addPause({ start: clock.now() - 2 * HOUR, end: clock.now() });
+
+    expect(merged).toEqual({ id: first.id, start: first.start, end: clock.now() });
+    expect(await store.getPauses()).toEqual([merged]);
+  });
+
+  test("editPause re-merges, keeping the earliest id, start and first label and the latest end", async () => {
+    const { clock, store } = createTestStore();
+    const first = await store.addPause({
+      start: clock.now() - 10 * HOUR,
+      end: clock.now() - 8 * HOUR,
+      label: "First",
+    });
+    const second = await store.addPause({
+      start: clock.now() - 5 * HOUR,
+      end: clock.now() - 3 * HOUR,
+      label: "Second",
+    });
+
+    const edited = await store.editPause(first.id, { end: clock.now() - 4 * HOUR });
+
+    expect(edited).toEqual({ id: first.id, start: first.start, end: second.end, label: "First" });
+    expect(await store.getPauses()).toEqual([edited]);
+  });
+
+  test("stored pauses stay sorted by start with no overlapping or touching ranges", async () => {
+    const { clock, store } = createTestStore();
+    await store.addPause({ start: clock.now() + 5 * HOUR, end: clock.now() + 6 * HOUR });
+    await store.addPause({ start: clock.now() - 5 * HOUR, end: clock.now() - 4 * HOUR });
+    await store.addPause({ start: clock.now() + HOUR, end: clock.now() + 2 * HOUR });
+
+    const pauses = await store.getPauses();
+
+    expect(pauses.map((p) => p.start)).toEqual([...pauses.map((p) => p.start)].sort((a, b) => a - b));
+    for (let i = 1; i < pauses.length; i++) {
+      const prevEnd = pauses[i - 1]!.end;
+      expect(prevEnd).not.toBeNull();
+      expect(prevEnd!).toBeLessThan(pauses[i]!.start);
+    }
+  });
+});
+
+describe("pause writes leave items untouched", () => {
+  test("addPause, editPause and deletePause don't change the stored items value", async () => {
+    const { storage, clock, store } = createTestStore();
+    const [bucket] = await store.getBuckets();
+    await store.addItem({
+      url: "https://example.com",
+      title: "Example",
+      bucketId: bucket!.id,
+      riffle: "24h",
+    });
+    const itemsBefore = storage.peek("items");
+
+    const pause = await store.addPause({ start: clock.now() - 2 * HOUR, end: clock.now() - HOUR });
+    await store.editPause(pause.id, { label: "Lunch" });
+    await store.deletePause(pause.id);
+
+    expect(storage.peek("items")).toBe(itemsBefore);
+  });
+
+  test("a past pause covering an overdue item's elapsed time makes it no longer overdue on read", async () => {
+    const { clock, store } = createTestStore();
+    const [bucket] = await store.getBuckets();
+    const item = await store.addItem({
+      url: "https://example.com",
+      title: "Example",
+      bucketId: bucket!.id,
+      riffle: "24h",
+    });
+
+    clock.advance(25 * HOUR);
+    expect(isOverdue(item, await store.getPauses(), clock.now())).toBe(true);
+
+    await store.addPause({ start: item.riffleEnteredAt, end: item.riffleEnteredAt + 24 * HOUR });
+
+    const pauses = await store.getPauses();
+    expect(isOverdue(item, pauses, clock.now())).toBe(false);
+    expect((await store.getItems())[0]).toEqual(item);
+  });
+});
+
+describe("prunePauses", () => {
+  test("removes only prunable pauses, keeping running and scheduled ones", async () => {
+    const { clock, store } = createTestStore();
+    const [bucket] = await store.getBuckets();
+    const base = clock.now();
+
+    const endedEarly = await store.addPause({ start: base - 3 * HOUR, end: base - HOUR });
+    await store.addItem({
+      url: "https://example.com",
+      title: "Example",
+      bucketId: bucket!.id,
+      riffle: "24h",
+    });
+    const running = await store.addPause({ start: base, end: base + 2 * HOUR });
+    const scheduled = await store.addPause({ start: base + 3 * HOUR, end: base + 4 * HOUR });
+    clock.advance(HOUR);
+
+    const pruned = await store.prunePauses();
+
+    expect(pruned.map((p) => p.id).sort()).toEqual([running.id, scheduled.id].sort());
+    expect(pruned.some((p) => p.id === endedEarly.id)).toBe(false);
+    expect(await store.getPauses()).toEqual(pruned);
+  });
+});
+
+describe("concurrent pause writes", () => {
+  test("two addPause calls started without awaiting both persist", async () => {
+    const { clock, store } = createTestStore();
+
+    const first = store.addPause({ start: clock.now() - 10 * HOUR, end: clock.now() - 9 * HOUR });
+    const second = store.addPause({ start: clock.now() - 5 * HOUR, end: clock.now() - 4 * HOUR });
+    const [a, b] = await Promise.all([first, second]);
+
+    expect(a.id).not.toBe(b.id);
+    const pauses = await store.getPauses();
+    expect(pauses).toHaveLength(2);
+    expect(pauses.map((p) => p.id).sort()).toEqual([a.id, b.id].sort());
   });
 });

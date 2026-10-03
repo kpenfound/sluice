@@ -1,6 +1,7 @@
 import { DEFAULT_BUCKET_NAMES, isRiffleId, nextRiffle } from "./model";
 import type { Bucket, Item, Pause, RiffleId } from "./model";
 import { normalize } from "./normalize";
+import { mergePauses, prunePauses as selectPrunablePauses, runningPause, validatePause } from "./pauses";
 
 /** A changed item in a `storage.onChanged` event, matching `browser.storage.StorageChange`. */
 export interface StorageChange {
@@ -38,6 +39,16 @@ export interface AddItemInput {
   riffle: RiffleId;
 }
 
+/** Input to `addPause`, a past range (with an explicit end or "until now") or a future-scheduled one. */
+export interface AddPauseInput {
+  start: number;
+  end: number | null;
+  label?: string;
+}
+
+/** Fields `editPause` may change on an existing pause. */
+export type EditPauseInput = Partial<Pick<Pause, "start" | "end" | "label">>;
+
 export interface Store {
   getBuckets(): Promise<Bucket[]>;
   getItems(): Promise<Item[]>;
@@ -50,6 +61,12 @@ export interface Store {
   changeBucket(id: string, bucketId: string): Promise<Item>;
   resolveItem(id: string): Promise<void>;
   recordVisit(url: string): Promise<Item | null>;
+  pauseNow(end?: number | null): Promise<Pause>;
+  resume(): Promise<Pause | null>;
+  addPause(input: AddPauseInput): Promise<Pause>;
+  editPause(id: string, patch: EditPauseInput): Promise<Pause>;
+  deletePause(id: string): Promise<void>;
+  prunePauses(): Promise<Pause[]>;
   subscribe(
     listener: (changes: Record<string, StorageChange>, areaName: string) => void,
   ): () => void;
@@ -274,6 +291,91 @@ export function createStore(storage: StorageNamespace, options: StoreOptions = {
     });
   }
 
+  /** The merged pause whose range covers `start`, after `mergePauses` has made ranges disjoint and non-touching. */
+  function findPauseAt(merged: Pause[], start: number): Pause {
+    return merged.find((p) => p.start <= start && (p.end === null || p.end > start))!;
+  }
+
+  /** Validates `candidate`, merges it into `pauses` (replacing `replaceId` if given) and returns the write. Rejects with no write when invalid. */
+  function mergeWrite(
+    pauses: Pause[],
+    candidate: Pause,
+    replaceId?: string,
+  ): { next: Pause[]; result: Pause } {
+    if (!validatePause(candidate)) {
+      throw new Error("Invalid pause: end must be null or after start.");
+    }
+    const others = replaceId !== undefined ? pauses.filter((p) => p.id !== replaceId) : pauses;
+    const next = mergePauses([...others, candidate]);
+    return { next, result: findPauseAt(next, candidate.start) };
+  }
+
+  /** Starts a pause with `start = now` and `end = null`, or the given later end that schedules the resume. */
+  function pauseNow(end: number | null = null): Promise<Pause> {
+    return update<Pause, Pause>("pauses", (current) => {
+      const whenNow = now();
+      return mergeWrite(current ?? [], { id: newId(), start: whenNow, end });
+    });
+  }
+
+  /** Sets `end = now` on the running pause. Does nothing when no pause is running. */
+  function resume(): Promise<Pause | null> {
+    return update<Pause, Pause | null>("pauses", (current) => {
+      const pauses = current ?? [];
+      const whenNow = now();
+      const running = runningPause(pauses, whenNow);
+      if (running === undefined) return { result: null };
+      return mergeWrite(pauses, { ...running, end: whenNow }, running.id);
+    });
+  }
+
+  /** Saves a pause over a past range (an explicit end, or "until now" when the caller passes `now`) or a future-scheduled one. */
+  function addPause(input: AddPauseInput): Promise<Pause> {
+    return update<Pause, Pause>("pauses", (current) => {
+      const pause: Pause = {
+        id: newId(),
+        start: input.start,
+        end: input.end,
+        ...(input.label !== undefined ? { label: input.label } : {}),
+      };
+      return mergeWrite(current ?? [], pause);
+    });
+  }
+
+  /** Changes a pause's start, end or label by id. Merging is reapplied on the result. */
+  function editPause(id: string, patch: EditPauseInput): Promise<Pause> {
+    return update<Pause, Pause>("pauses", (current) => {
+      const pauses = current ?? [];
+      const existing = pauses.find((p) => p.id === id);
+      if (existing === undefined) throw new Error(`Unknown pause: ${id}`);
+      const updated: Pause = { ...existing, ...patch };
+      return mergeWrite(pauses, updated, id);
+    });
+  }
+
+  /** Deletes a pause by id. */
+  function deletePause(id: string): Promise<void> {
+    return update<Pause, void>("pauses", (current) => {
+      const pauses = current ?? [];
+      const index = pauses.findIndex((p) => p.id === id);
+      if (index === -1) throw new Error(`Unknown pause: ${id}`);
+      const remaining = pauses.filter((p) => p.id !== id);
+      return { next: mergePauses(remaining), result: undefined };
+    });
+  }
+
+  /** Removes every pause `pauses.ts`'s `prunePauses` selects as no longer able to affect any item. */
+  function prunePauses(): Promise<Pause[]> {
+    return enqueue(async () => {
+      const stored = await storage.local.get(["pauses", "items"]);
+      const pauses = (stored.pauses as Pause[] | undefined) ?? [];
+      const items = (stored.items as Item[] | undefined) ?? [];
+      const pruned = selectPrunablePauses(pauses, items, now());
+      await storage.local.set({ pauses: pruned });
+      return pruned;
+    });
+  }
+
   function subscribe(
     listener: (changes: Record<string, StorageChange>, areaName: string) => void,
   ): () => void {
@@ -298,6 +400,12 @@ export function createStore(storage: StorageNamespace, options: StoreOptions = {
     changeBucket,
     resolveItem,
     recordVisit,
+    pauseNow,
+    resume,
+    addPause,
+    editPause,
+    deletePause,
+    prunePauses,
     subscribe,
   };
 }

@@ -1,0 +1,1 @@
+- [dagger check unreachable from mason sandbox](project_dagger_check_sandbox_blocker.md) — use npm test/typecheck/lint locally instead; service runs real checks after done

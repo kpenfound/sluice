@@ -1,6 +1,7 @@
 import { describe, expect, test } from "vitest";
 import { createStore } from "./store";
 import type { StorageChange, StorageNamespace } from "./store";
+import type { Item } from "./model";
 
 type Listener = (changes: Record<string, StorageChange>, areaName: string) => void;
 
@@ -229,5 +230,352 @@ describe("subscribe", () => {
     await storage.local.set({ items: [] });
 
     expect(received).toHaveLength(1);
+  });
+});
+
+describe("addItem", () => {
+  test("creates one item for an unqueued URL", async () => {
+    const { clock, store } = createTestStore();
+    const [bucket] = await store.getBuckets();
+
+    const item = await store.addItem({
+      url: "https://example.com/post?utm_source=x",
+      title: "Example",
+      favIconUrl: "https://example.com/favicon.ico",
+      bucketId: bucket!.id,
+      riffle: "24h",
+    });
+
+    expect(item).toEqual({
+      id: "id-3",
+      url: "https://example.com/post?utm_source=x",
+      normUrl: "https://example.com/post",
+      title: "Example",
+      favIconUrl: "https://example.com/favicon.ico",
+      bucketId: bucket!.id,
+      riffle: "24h",
+      queuedAt: clock.now(),
+      riffleEnteredAt: clock.now(),
+      lastVisitedAt: null,
+    });
+    expect(await store.getItems()).toEqual([item]);
+  });
+
+  test("rejects an unknown bucket", async () => {
+    const { store } = createTestStore();
+    await store.getBuckets();
+    await expect(
+      store.addItem({ url: "https://example.com", title: "Example", bucketId: "missing", riffle: "24h" }),
+    ).rejects.toThrow();
+    expect(await store.getItems()).toEqual([]);
+  });
+
+  test("rejects an unknown riffle", async () => {
+    const { store } = createTestStore();
+    const [bucket] = await store.getBuckets();
+    await expect(
+      store.addItem({
+        url: "https://example.com",
+        title: "Example",
+        bucketId: bucket!.id,
+        riffle: "yearly" as never,
+      }),
+    ).rejects.toThrow();
+    expect(await store.getItems()).toEqual([]);
+  });
+
+  test("re-adding an already-queued URL moves it instead of duplicating it", async () => {
+    const { clock, store } = createTestStore();
+    const [bucketA, bucketB] = await store.getBuckets();
+    const original = await store.addItem({
+      url: "https://example.com/post",
+      title: "Example",
+      favIconUrl: "https://example.com/favicon.ico",
+      bucketId: bucketA!.id,
+      riffle: "24h",
+    });
+
+    clock.advance(10_000);
+    const moved = await store.addItem({
+      url: "https://example.com/post#section",
+      title: "Different title",
+      favIconUrl: "https://example.com/other.ico",
+      bucketId: bucketB!.id,
+      riffle: "1w",
+    });
+
+    expect(moved).toEqual({
+      ...original,
+      bucketId: bucketB!.id,
+      riffle: "1w",
+      riffleEnteredAt: clock.now(),
+    });
+    const items = await store.getItems();
+    expect(items).toHaveLength(1);
+    expect(items[0]!.id).toBe(original.id);
+  });
+
+  test("a URL differing only by tracking params matches the same item", async () => {
+    const { store } = createTestStore();
+    const [bucket] = await store.getBuckets();
+    const original = await store.addItem({
+      url: "https://example.com/post",
+      title: "Example",
+      bucketId: bucket!.id,
+      riffle: "24h",
+    });
+
+    await store.addItem({
+      url: "https://example.com/post?utm_source=newsletter&fbclid=abc",
+      title: "Example",
+      bucketId: bucket!.id,
+      riffle: "72h",
+    });
+
+    const items = await store.getItems();
+    expect(items).toHaveLength(1);
+    expect(items[0]!.id).toBe(original.id);
+    expect(items[0]!.queuedAt).toBe(original.queuedAt);
+  });
+});
+
+describe("deferItem", () => {
+  test("steps through the whole ladder, setting riffleEnteredAt and leaving other fields unchanged", async () => {
+    const { clock, store } = createTestStore();
+    const [bucket] = await store.getBuckets();
+    const item = await store.addItem({
+      url: "https://example.com",
+      title: "Example",
+      bucketId: bucket!.id,
+      riffle: "24h",
+    });
+
+    const ladder: Array<Item["riffle"]> = ["72h", "1w", "1mo", "stale"];
+    let current = item;
+    for (const expectedRiffle of ladder) {
+      clock.advance(1_000);
+      const deferred = await store.deferItem(current.id);
+      expect(deferred).toEqual({
+        ...current,
+        riffle: expectedRiffle,
+        riffleEnteredAt: clock.now(),
+      });
+      current = deferred;
+    }
+  });
+
+  test("is a no-op on a stale item", async () => {
+    const { store } = createTestStore();
+    const [bucket] = await store.getBuckets();
+    const item = await store.addItem({
+      url: "https://example.com",
+      title: "Example",
+      bucketId: bucket!.id,
+      riffle: "stale",
+    });
+
+    const deferred = await store.deferItem(item.id);
+    expect(deferred).toEqual(item);
+  });
+});
+
+describe("moveItem", () => {
+  test("moves an item up, down and out of stale, setting riffleEnteredAt and leaving other fields unchanged", async () => {
+    const { clock, store } = createTestStore();
+    const [bucket] = await store.getBuckets();
+    const item = await store.addItem({
+      url: "https://example.com",
+      title: "Example",
+      bucketId: bucket!.id,
+      riffle: "24h",
+    });
+
+    clock.advance(1_000);
+    const up = await store.moveItem(item.id, "1mo");
+    expect(up).toEqual({ ...item, riffle: "1mo", riffleEnteredAt: clock.now() });
+
+    clock.advance(1_000);
+    const down = await store.moveItem(item.id, "72h");
+    expect(down).toEqual({ ...up, riffle: "72h", riffleEnteredAt: clock.now() });
+
+    clock.advance(1_000);
+    const stale = await store.moveItem(item.id, "stale");
+    expect(stale).toEqual({ ...down, riffle: "stale", riffleEnteredAt: clock.now() });
+
+    clock.advance(1_000);
+    const outOfStale = await store.moveItem(item.id, "24h");
+    expect(outOfStale).toEqual({ ...stale, riffle: "24h", riffleEnteredAt: clock.now() });
+  });
+});
+
+describe("changeBucket", () => {
+  test("changes only bucketId, leaving riffle and timestamps unchanged", async () => {
+    const { store } = createTestStore();
+    const [bucketA, bucketB] = await store.getBuckets();
+    const item = await store.addItem({
+      url: "https://example.com",
+      title: "Example",
+      bucketId: bucketA!.id,
+      riffle: "24h",
+    });
+
+    const changed = await store.changeBucket(item.id, bucketB!.id);
+    expect(changed).toEqual({ ...item, bucketId: bucketB!.id });
+  });
+
+  test("rejects an unknown bucket", async () => {
+    const { store } = createTestStore();
+    const [bucket] = await store.getBuckets();
+    const item = await store.addItem({
+      url: "https://example.com",
+      title: "Example",
+      bucketId: bucket!.id,
+      riffle: "24h",
+    });
+
+    await expect(store.changeBucket(item.id, "missing")).rejects.toThrow();
+    expect((await store.getItems())[0]).toEqual(item);
+  });
+});
+
+describe("resolveItem", () => {
+  test("removes the item from storage entirely", async () => {
+    const { store } = createTestStore();
+    const [bucket] = await store.getBuckets();
+    const item = await store.addItem({
+      url: "https://example.com",
+      title: "Example",
+      bucketId: bucket!.id,
+      riffle: "24h",
+    });
+
+    await store.resolveItem(item.id);
+    expect(await store.getItems()).toEqual([]);
+  });
+});
+
+describe("recordVisit", () => {
+  test("on a match, sets only lastVisitedAt, leaving the item in its riffle", async () => {
+    const { clock, store } = createTestStore();
+    const [bucket] = await store.getBuckets();
+    const item = await store.addItem({
+      url: "https://example.com/post",
+      title: "Example",
+      bucketId: bucket!.id,
+      riffle: "24h",
+    });
+
+    clock.advance(5_000);
+    const visited = await store.recordVisit("https://example.com/post?utm_source=x");
+    expect(visited).toEqual({ ...item, lastVisitedAt: clock.now() });
+    expect(visited!.riffle).toBe("24h");
+  });
+
+  test("on no match, returns null and writes nothing", async () => {
+    const { storage, store } = createTestStore();
+    const [bucket] = await store.getBuckets();
+    await store.addItem({
+      url: "https://example.com/post",
+      title: "Example",
+      bucketId: bucket!.id,
+      riffle: "24h",
+    });
+    const before = storage.peek("items");
+
+    const visited = await store.recordVisit("https://nothing-here.example.com");
+
+    expect(visited).toBeNull();
+    expect(storage.peek("items")).toBe(before);
+  });
+});
+
+describe("item actions while overdue or paused", () => {
+  test("every action succeeds on an item long past its riffle's TTL", async () => {
+    const { clock, store } = createTestStore();
+    const [bucketA, bucketB] = await store.getBuckets();
+    const item = await store.addItem({
+      url: "https://example.com/overdue",
+      title: "Example",
+      bucketId: bucketA!.id,
+      riffle: "24h",
+    });
+    clock.advance(1000 * 60 * 60 * 24 * 365);
+
+    await expect(store.recordVisit("https://example.com/overdue")).resolves.not.toBeNull();
+    await expect(store.deferItem(item.id)).resolves.toBeDefined();
+    await expect(store.moveItem(item.id, "1mo")).resolves.toBeDefined();
+    await expect(store.changeBucket(item.id, bucketB!.id)).resolves.toBeDefined();
+    await expect(
+      store.addItem({
+        url: "https://example.com/another",
+        title: "Another",
+        bucketId: bucketA!.id,
+        riffle: "24h",
+      }),
+    ).resolves.toBeDefined();
+    await expect(store.resolveItem(item.id)).resolves.toBeUndefined();
+  });
+
+  test("every action succeeds with a running pause seeded in storage", async () => {
+    const { storage, clock, store } = createTestStore();
+    const [bucketA, bucketB] = await store.getBuckets();
+    await storage.local.set({ pauses: [{ id: "p1", start: clock.now() - 1_000, end: null }] });
+    const item = await store.addItem({
+      url: "https://example.com/paused",
+      title: "Example",
+      bucketId: bucketA!.id,
+      riffle: "24h",
+    });
+
+    await expect(store.recordVisit("https://example.com/paused")).resolves.not.toBeNull();
+    await expect(store.deferItem(item.id)).resolves.toBeDefined();
+    await expect(store.moveItem(item.id, "1mo")).resolves.toBeDefined();
+    await expect(store.changeBucket(item.id, bucketB!.id)).resolves.toBeDefined();
+    await expect(store.resolveItem(item.id)).resolves.toBeUndefined();
+    expect(storage.peek("pauses")).toEqual([{ id: "p1", start: expect.any(Number), end: null }]);
+  });
+});
+
+describe("item action concurrency and storage shape", () => {
+  test("two concurrent addItem calls for different URLs both persist", async () => {
+    const { store } = createTestStore();
+    const [bucket] = await store.getBuckets();
+
+    const first = store.addItem({
+      url: "https://example.com/a",
+      title: "A",
+      bucketId: bucket!.id,
+      riffle: "24h",
+    });
+    const second = store.addItem({
+      url: "https://example.com/b",
+      title: "B",
+      bucketId: bucket!.id,
+      riffle: "24h",
+    });
+    const [a, b] = await Promise.all([first, second]);
+
+    expect(a.id).not.toBe(b.id);
+    const items = await store.getItems();
+    expect(items).toHaveLength(2);
+    expect(items.map((item) => item.url)).toEqual(
+      expect.arrayContaining(["https://example.com/a", "https://example.com/b"]),
+    );
+  });
+
+  test("stored items carry only the Data model fields", async () => {
+    const { storage, store } = createTestStore();
+    const [bucket] = await store.getBuckets();
+    await store.addItem({
+      url: "https://example.com",
+      title: "Example",
+      bucketId: bucket!.id,
+      riffle: "24h",
+    });
+
+    const [stored] = storage.peek("items") as Item[];
+    expect(Object.keys(stored!).sort()).toEqual(
+      ["bucketId", "id", "lastVisitedAt", "normUrl", "queuedAt", "riffle", "riffleEnteredAt", "title", "url"].sort(),
+    );
   });
 });

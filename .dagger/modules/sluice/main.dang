@@ -1,0 +1,148 @@
+"""
+Sluice's own checks: unit tests, type checking and extension lint.
+"""
+type Sluice {
+  """
+  The Node image the checks run in.
+  """
+  baseImageAddress: String! = "node:24-alpine"
+
+  """
+  Unit tests, keyed by test file path relative to the repository root.
+  """
+  tests(ws: Workspace!): SluiceTests! {
+    SluiceTests(files: testFiles(ws), tool: self)
+  }
+
+  """
+  Type-check the extension, its tests and its scripts.
+  """
+  typecheck(ws: Workspace!): Void @check {
+    runner(ws).withExec(["npm", "run", "typecheck"]).sync
+    null
+  }
+
+  """
+  Build the extension and lint the result with web-ext.
+  """
+  lint(ws: Workspace!): Void @check {
+    runner(ws).withExec(["npm", "run", "lint"]).sync
+    null
+  }
+
+  """
+  A shell with dependencies installed and the repository at /src.
+  """
+  dev(ws: Workspace!): Container! {
+    runner(ws).withDefaultTerminalCmd(["/bin/sh"])
+  }
+
+  """
+  Container with dependencies installed from the lockfile. Only package.json
+  and package-lock.json are mounted, so editing source does not reinstall.
+  """
+  let installed(ws: Workspace!): Container! {
+    container
+      .from(baseImageAddress)
+      .withMountedCache("/root/.npm", cacheVolume("sluice-npm"))
+      .withWorkdir("/src")
+      .withDirectory("/src", ws.directory("/", include: ["package.json", "package-lock.json"]))
+      .withExec(["npm", "ci"])
+  }
+
+  """
+  The installed container with the rest of the repository laid over it.
+  """
+  let runner(ws: Workspace!): Container! {
+    installed(ws).withDirectory(
+      "/src",
+      ws.directory(
+        "/",
+        exclude: ["**/node_modules", "dist", ".git", ".dagger"],
+        gitignore: true,
+      ),
+    )
+  }
+
+  """
+  Run exactly these repository-relative test files. Vitest treats file
+  arguments as substring filters, so each is passed as an absolute path,
+  which can only match itself.
+  """
+  let vitest(ws: Workspace!, files: [String!]!): Void {
+    runner(ws)
+      .withExec(["node_modules/.bin/vitest", "run"] + files.map { file => "/src/" + file })
+      .sync
+    null
+  }
+
+  # Test files are found by one ripgrep search with the include pattern from
+  # vitest.config.ts, so listing runs no container. The order is byte order,
+  # so keys are stable.
+  let testFiles(ws: Workspace!): [String!]! {
+    sorted(ws
+      .search(
+        paths: ["/src"],
+        globs: ["*.test.ts", "!node_modules"],
+        pattern: "",
+        filesOnly: true,
+      ).{{filePath}}
+      .map { result => result.filePath.trimPrefix("/").trimPrefix("./") }
+      .uniq)
+  }
+
+  let sorted(items: [String!]!): [String!]! {
+    let empty: [String!]! = []
+    items.reduce(empty) { acc, item =>
+      acc.takeWhile { x => x <= item } + [item] + acc.dropWhile { x => x <= item }
+    }
+  }
+}
+
+"""
+Unit test files, keyed by path relative to the repository root.
+"""
+type SluiceTests @collection {
+  """
+  Test file paths, relative to the repository root.
+  """
+  files: [String!]! @keys
+
+  let tool: Sluice!
+
+  """
+  The test file at this repository-relative path.
+  """
+  file(path: String!): SluiceTest! @get {
+    SluiceTest(path: path, tool: tool)
+  }
+
+  """
+  Run the selected test files together in one Vitest run.
+  """
+  test(ws: Workspace!): Void @check {
+    if (files.length > 0) {
+      tool.vitest(ws, files)
+    }
+    null
+  }
+}
+
+"""
+A unit test file.
+"""
+type SluiceTest {
+  """
+  Test file path, relative to the repository root.
+  """
+  path: String!
+
+  let tool: Sluice!
+
+  """
+  Run this test file.
+  """
+  test(ws: Workspace!): Void @check {
+    tool.vitest(ws, [path])
+  }
+}

@@ -1,0 +1,23 @@
+{
+  "name": "sluice",
+  "version": "0.0.0",
+  "private": true,
+  "description": "A Firefox extension that makes every tab disposable.",
+  "license": "MIT",
+  "type": "module",
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "watch": "node scripts/build.mjs --watch",
+    "start": "web-ext run --source-dir dist",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit",
+    "lint": "node scripts/build.mjs && web-ext lint --source-dir dist --self-hosted"
+  },
+  "devDependencies": {
+    "@types/firefox-webext-browser": "^143.0.1",
+    "esbuild": "^0.28.2",
+    "typescript": "^7.0.2",
+    "vitest": "^4.1.11",
+    "web-ext": "^10.7.0"
+  }
+}

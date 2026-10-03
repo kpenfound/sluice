@@ -1,0 +1,13 @@
+[modules.dang-sdk]
+source = "dagger.io/sdk/dang"
+
+[sdks.dang]
+module = "dang-sdk"
+
+[modules.sluice]
+entrypoint = true
+source = ".dagger/modules/sluice"
+
+[sdks.dang.scopes.".dagger/modules/sluice"]
+is-module = true
+name = "sluice"

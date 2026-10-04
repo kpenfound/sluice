@@ -67,12 +67,17 @@ export interface Store {
   editPause(id: string, patch: EditPauseInput): Promise<Pause>;
   deletePause(id: string): Promise<void>;
   prunePauses(): Promise<Pause[]>;
+  getLastActiveAt(): Promise<number | null>;
+  touchActive(): Promise<number>;
+  getLastBucketId(): Promise<string | null>;
+  setLastBucketId(id: string): Promise<void>;
   subscribe(
     listener: (changes: Record<string, StorageChange>, areaName: string) => void,
   ): () => void;
 }
 
 type StorageKey = "buckets" | "items" | "pauses";
+type PrefKey = "lastActiveAt" | "lastBucketId";
 
 const WATCHED_KEYS: StorageKey[] = ["buckets", "items", "pauses"];
 
@@ -376,6 +381,30 @@ export function createStore(storage: StorageNamespace, options: StoreOptions = {
     });
   }
 
+  /** Reads a scalar preference key, or null when it is absent. Makes no write. */
+  function getPref<T>(key: PrefKey): Promise<T | null> {
+    return enqueue(async () => {
+      const stored = await storage.local.get(key);
+      return (stored[key] as T | undefined) ?? null;
+    });
+  }
+
+  /** Writes `lastActiveAt = now` and returns it. */
+  function touchActive(): Promise<number> {
+    return enqueue(async () => {
+      const whenNow = now();
+      await storage.local.set({ lastActiveAt: whenNow });
+      return whenNow;
+    });
+  }
+
+  /** Records the bucket last used when adding an item. */
+  function setLastBucketId(id: string): Promise<void> {
+    return enqueue(async () => {
+      await storage.local.set({ lastBucketId: id });
+    });
+  }
+
   function subscribe(
     listener: (changes: Record<string, StorageChange>, areaName: string) => void,
   ): () => void {
@@ -406,6 +435,10 @@ export function createStore(storage: StorageNamespace, options: StoreOptions = {
     editPause,
     deletePause,
     prunePauses,
+    getLastActiveAt: () => getPref<number>("lastActiveAt"),
+    touchActive,
+    getLastBucketId: () => getPref<string>("lastBucketId"),
+    setLastBucketId,
     subscribe,
   };
 }

@@ -837,6 +837,66 @@ describe("prunePauses", () => {
   });
 });
 
+describe("lastActiveAt and lastBucketId", () => {
+  test("getLastActiveAt and getLastBucketId return null on empty storage and write nothing", async () => {
+    const { storage, store } = createTestStore();
+
+    expect(await store.getLastActiveAt()).toBeNull();
+    expect(await store.getLastBucketId()).toBeNull();
+
+    expect(storage.peek("lastActiveAt")).toBeUndefined();
+    expect(storage.peek("lastBucketId")).toBeUndefined();
+  });
+
+  test("touchActive stores now under lastActiveAt and returns it", async () => {
+    const { clock, store } = createTestStore();
+
+    const touched = await store.touchActive();
+
+    expect(touched).toBe(clock.now());
+    expect(await store.getLastActiveAt()).toBe(clock.now());
+  });
+
+  test("setLastBucketId stores the id under lastBucketId", async () => {
+    const { store } = createTestStore();
+
+    await store.setLastBucketId("bucket-1");
+
+    expect(await store.getLastBucketId()).toBe("bucket-1");
+  });
+
+  test("touchActive and setLastBucketId fire no subscribe listener, unlike a buckets/items/pauses change", async () => {
+    const { storage, store } = createTestStore();
+    const received: unknown[] = [];
+    store.subscribe((changes) => received.push(changes));
+
+    await store.touchActive();
+    await store.setLastBucketId("bucket-1");
+    expect(received).toHaveLength(0);
+
+    await storage.local.set({ buckets: [] });
+    expect(received).toHaveLength(1);
+  });
+
+  test("an un-awaited touchActive alongside addItem both persist", async () => {
+    const { clock, store } = createTestStore();
+    const [bucket] = await store.getBuckets();
+
+    const touched = store.touchActive();
+    const added = store.addItem({
+      url: "https://example.com",
+      title: "Example",
+      bucketId: bucket!.id,
+      riffle: "24h",
+    });
+    const [touchedResult, addedResult] = await Promise.all([touched, added]);
+
+    expect(touchedResult).toBe(clock.now());
+    expect(await store.getLastActiveAt()).toBe(clock.now());
+    expect(await store.getItems()).toEqual([addedResult]);
+  });
+});
+
 describe("concurrent pause writes", () => {
   test("two addPause calls started without awaiting both persist", async () => {
     const { clock, store } = createTestStore();

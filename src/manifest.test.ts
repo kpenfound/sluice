@@ -15,4 +15,10 @@ describe("manifest", () => {
     expect(manifest.chrome_url_overrides.newtab).toBe("newtab.html");
     expect(manifest.action.default_popup).toBe("popup.html");
   });
+
+  test("declares the _execute_action command with a suggested key", () => {
+    const command = manifest.commands._execute_action;
+    expect(command.suggested_key.default).toBeTruthy();
+    expect(command.description).toBeTruthy();
+  });
 });

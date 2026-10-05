@@ -11,7 +11,8 @@
     "start": "web-ext run --source-dir dist",
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
-    "lint": "node scripts/build.mjs && web-ext lint --source-dir dist --self-hosted"
+    "lint": "node scripts/build.mjs && web-ext lint --source-dir dist --self-hosted",
+    "release": "node scripts/release.mjs"
   },
   "devDependencies": {
     "@types/firefox-webext-browser": "^143.0.1",

@@ -19,6 +19,9 @@
         "default": "Alt+Shift+S"
       },
       "description": "Add current tab"
+    },
+    "open-launcher": {
+      "description": "Open launcher"
     }
   },
   "background": {

@@ -21,4 +21,10 @@ describe("manifest", () => {
     expect(command.suggested_key.default).toBeTruthy();
     expect(command.description).toBeTruthy();
   });
+
+  test("declares the open-launcher command with no suggested key", () => {
+    const command = manifest.commands["open-launcher"];
+    expect(command.description).toBe("Open launcher");
+    expect(command).not.toHaveProperty("suggested_key");
+  });
 });

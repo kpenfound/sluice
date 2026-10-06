@@ -1,6 +1,14 @@
 import { describe, expect, test } from "vitest";
 import type { Bucket, Pause } from "../lib/model";
-import { bucketList, parsePauseForm, pauseRows, toDateTimeLocal, validBucketName } from "./model";
+import {
+  autoCloseMinutes,
+  bucketList,
+  parseAutoCloseMinutes,
+  parsePauseForm,
+  pauseRows,
+  toDateTimeLocal,
+  validBucketName,
+} from "./model";
 
 function bucket(id: string, name: string, order: number): Bucket {
   return { id, name, order };
@@ -230,6 +238,42 @@ describe("parsePauseForm", () => {
     const futureStr = `${future.getFullYear()}-${pad(future.getMonth() + 1)}-${pad(future.getDate())}T${pad(future.getHours())}:${pad(future.getMinutes())}`;
     const result = parsePauseForm({ start: futureStr, endMode: "now", end: "", label: "" }, now);
     expect(result.ok).toBe(false);
+  });
+});
+
+describe("parseAutoCloseMinutes", () => {
+  test("accepts '1'", () => {
+    expect(parseAutoCloseMinutes("1")).toEqual({ ok: true, ms: 60 * 1000 });
+  });
+
+  test("accepts '120'", () => {
+    expect(parseAutoCloseMinutes("120")).toEqual({ ok: true, ms: 120 * 60 * 1000 });
+  });
+
+  test("rejects '0'", () => {
+    expect(parseAutoCloseMinutes("0").ok).toBe(false);
+  });
+
+  test("rejects '-5'", () => {
+    expect(parseAutoCloseMinutes("-5").ok).toBe(false);
+  });
+
+  test("rejects '1.5'", () => {
+    expect(parseAutoCloseMinutes("1.5").ok).toBe(false);
+  });
+
+  test("rejects 'abc'", () => {
+    expect(parseAutoCloseMinutes("abc").ok).toBe(false);
+  });
+
+  test("rejects a blank input", () => {
+    expect(parseAutoCloseMinutes("   ").ok).toBe(false);
+  });
+});
+
+describe("autoCloseMinutes", () => {
+  test("formats 2 hours as 120 minutes", () => {
+    expect(autoCloseMinutes(2 * 60 * 60 * 1000)).toBe(120);
   });
 });
 

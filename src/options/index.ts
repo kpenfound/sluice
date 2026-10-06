@@ -4,7 +4,9 @@
 import type { Bucket } from "../lib/model";
 import { createStore } from "../lib/store";
 import {
+  autoCloseMinutes,
   bucketList,
+  parseAutoCloseMinutes,
   parsePauseForm,
   pauseRows,
   toDateTimeLocal,
@@ -291,8 +293,58 @@ function renderPauses(container: HTMLElement, rows: PauseRow[]): void {
   container.append(section);
 }
 
+function renderTabs(container: HTMLElement, autoCloseAfter: number): void {
+  const section = document.createElement("section");
+
+  const heading = document.createElement("h2");
+  heading.textContent = "Tabs";
+  section.append(heading);
+
+  const form = document.createElement("form");
+
+  const label = document.createElement("label");
+  label.textContent = "Auto-close inactive tabs after (minutes)";
+  form.append(label);
+
+  const minutesInput = document.createElement("input");
+  minutesInput.type = "number";
+  minutesInput.min = "1";
+  minutesInput.step = "1";
+  minutesInput.value = String(autoCloseMinutes(autoCloseAfter));
+  form.append(minutesInput);
+
+  const message = document.createElement("p");
+
+  const submit = document.createElement("button");
+  submit.type = "submit";
+  submit.textContent = "Save";
+  form.append(submit);
+
+  form.addEventListener("submit", (event) => {
+    event.preventDefault();
+    const result = parseAutoCloseMinutes(minutesInput.value);
+    if (!result.ok) {
+      message.textContent = result.error;
+      return;
+    }
+    message.textContent = "";
+    store.setAutoCloseAfter(result.ms).catch((err: unknown) => {
+      message.textContent = errorMessage(err);
+    });
+  });
+
+  form.append(message);
+  section.append(form);
+
+  container.append(section);
+}
+
 async function renderApp(): Promise<void> {
-  const [buckets, pauses] = await Promise.all([store.getBuckets(), store.getPauses()]);
+  const [buckets, pauses, autoCloseAfter] = await Promise.all([
+    store.getBuckets(),
+    store.getPauses(),
+    store.getAutoCloseAfter(),
+  ]);
   const rows = pauseRows(pauses, Date.now());
 
   app.replaceChildren();
@@ -301,6 +353,7 @@ async function renderApp(): Promise<void> {
 
   renderBuckets(container, buckets);
   renderPauses(container, rows);
+  renderTabs(container, autoCloseAfter);
 }
 
 void renderApp();

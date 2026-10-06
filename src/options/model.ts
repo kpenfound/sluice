@@ -1,6 +1,28 @@
 import type { Bucket, Pause } from "../lib/model";
 import { runningPause } from "../lib/pauses";
 
+const MINUTE_MS = 60 * 1000;
+
+export type ParseAutoCloseMinutesResult = { ok: true; ms: number } | { ok: false; error: string };
+
+/** Parses the auto-close timeout input into milliseconds: a whole number of minutes, 1 or more. */
+export function parseAutoCloseMinutes(input: string): ParseAutoCloseMinutesResult {
+  const trimmed = input.trim();
+  if (trimmed === "") return { ok: false, error: "Enter a whole number of minutes, 1 or more." };
+
+  const minutes = Number(trimmed);
+  if (!Number.isInteger(minutes) || minutes < 1) {
+    return { ok: false, error: "Enter a whole number of minutes, 1 or more." };
+  }
+
+  return { ok: true, ms: minutes * MINUTE_MS };
+}
+
+/** Formats an auto-close timeout in milliseconds as whole minutes, for display. */
+export function autoCloseMinutes(ms: number): number {
+  return Math.round(ms / MINUTE_MS);
+}
+
 /** Buckets ordered by `order`, for the options page's bucket list. */
 export function bucketList(buckets: Bucket[]): Bucket[] {
   return [...buckets].sort((a, b) => a.order - b.order);

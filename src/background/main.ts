@@ -5,6 +5,7 @@ import { handleVisited } from "./revisit";
 import { tick } from "./tick";
 
 const ALARM_NAME = "sluice-tick";
+const LAUNCHER_PAGE = "newtab.html";
 
 /** The `browser` members the background script's event wiring uses. */
 export interface BackgroundApi {
@@ -14,12 +15,19 @@ export interface BackgroundApi {
     create(name: string, alarmInfo: browser.alarms._CreateAlarmInfo): Promise<void>;
     onAlarm: typeof browser.alarms.onAlarm;
   };
+  commands: {
+    onCommand: typeof browser.commands.onCommand;
+  };
   history: {
     onVisited: typeof browser.history.onVisited;
   };
   runtime: {
     onInstalled: typeof browser.runtime.onInstalled;
     onStartup: typeof browser.runtime.onStartup;
+    getURL: typeof browser.runtime.getURL;
+  };
+  tabs: {
+    create: typeof browser.tabs.create;
   };
   action: {
     setBadgeText: typeof browser.action.setBadgeText;
@@ -63,6 +71,11 @@ export function start(api: BackgroundApi): void {
 
   api.history.onVisited.addListener((item) => {
     void handleVisited(store, item);
+  });
+
+  api.commands.onCommand.addListener((command) => {
+    if (command !== "open-launcher") return;
+    void api.tabs.create({ url: api.runtime.getURL(LAUNCHER_PAGE) });
   });
 
   api.runtime.onInstalled.addListener(() => {

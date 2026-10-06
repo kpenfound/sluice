@@ -102,7 +102,9 @@ function makeApi(storage: StorageNamespace, alarms: FakeAlarms) {
   const onVisited = new FakeEvent<(item: browser.history.HistoryItem) => void>();
   const onInstalled = new FakeEvent<(details: browser.runtime._OnInstalledDetails) => void>();
   const onStartup = new FakeEvent<() => void>();
+  const onCommand = new FakeEvent<(command: string, tab: browser.tabs.Tab) => void>();
   const badgeTexts: Array<string | null> = [];
+  const createdTabs: Array<browser.tabs._CreateCreateProperties> = [];
 
   const api: BackgroundApi = {
     storage,
@@ -111,8 +113,19 @@ function makeApi(storage: StorageNamespace, alarms: FakeAlarms) {
       create: alarms.create,
       onAlarm: alarms.onAlarm,
     },
+    commands: { onCommand },
     history: { onVisited },
-    runtime: { onInstalled, onStartup },
+    runtime: {
+      onInstalled,
+      onStartup,
+      getURL: (path) => `moz-extension://fake-id/${path}`,
+    },
+    tabs: {
+      create: (createProperties) => {
+        createdTabs.push(createProperties);
+        return Promise.resolve({ id: createdTabs.length, index: 0, highlighted: false, active: false, pinned: false, incognito: false } as browser.tabs.Tab);
+      },
+    },
     action: {
       setBadgeText: (details) => {
         badgeTexts.push(details.text);
@@ -121,14 +134,14 @@ function makeApi(storage: StorageNamespace, alarms: FakeAlarms) {
     },
   };
 
-  return { api, onVisited, onInstalled, onStartup, badgeTexts };
+  return { api, onVisited, onInstalled, onStartup, onCommand, badgeTexts, createdTabs };
 }
 
 describe("start", () => {
   test("registers every listener synchronously, before any awaited work", () => {
     const storage = new FakeStorage();
     const alarms = new FakeAlarms();
-    const { api, onVisited, onInstalled, onStartup } = makeApi(storage, alarms);
+    const { api, onVisited, onInstalled, onStartup, onCommand } = makeApi(storage, alarms);
 
     start(api);
 
@@ -136,6 +149,7 @@ describe("start", () => {
     expect(onVisited.count).toBe(1);
     expect(onInstalled.count).toBe(1);
     expect(onStartup.count).toBe(1);
+    expect(onCommand.count).toBe(1);
     expect(storage.listenerCount).toBe(1);
   });
 
@@ -324,6 +338,30 @@ describe("start", () => {
 
     const items = storage.peek("items") as Array<{ lastVisitedAt: number | null }>;
     expect(items[0]!.lastVisitedAt).not.toBeNull();
+  });
+
+  test("firing the open-launcher command opens exactly one tab at the launcher URL", async () => {
+    const storage = new FakeStorage();
+    const alarms = new FakeAlarms();
+    const { api, onCommand, createdTabs } = makeApi(storage, alarms);
+
+    start(api);
+    onCommand.fire("open-launcher", {} as browser.tabs.Tab);
+    await flush();
+
+    expect(createdTabs).toEqual([{ url: "moz-extension://fake-id/newtab.html" }]);
+  });
+
+  test("firing an unknown command creates no tab", async () => {
+    const storage = new FakeStorage();
+    const alarms = new FakeAlarms();
+    const { api, onCommand, createdTabs } = makeApi(storage, alarms);
+
+    start(api);
+    onCommand.fire("some-other-command", {} as browser.tabs.Tab);
+    await flush();
+
+    expect(createdTabs).toEqual([]);
   });
 
   test("a store write to items or pauses triggers a badge refresh, but touchActive() alone does not", async () => {

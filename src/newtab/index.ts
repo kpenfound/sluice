@@ -3,11 +3,21 @@
 // DOM, holds page state (the selected bucket, search query and Stale's
 // expanded/collapsed state) and wires store actions to mouse events.
 import type { AwayGap } from "../lib/away";
+import type { TrackedTab } from "../lib/lifecycle";
 import type { Bucket, Item, Pause, RiffleId } from "../lib/model";
 import { RIFFLES } from "../lib/model";
 import { createStore } from "../lib/store";
-import { dueLabel, formatDuration, keyAction, launcherView } from "./model";
-import type { AwayGapBanner, Column, ItemView, KeyAction, LauncherView, PauseBanner } from "./model";
+import { dueLabel, formatDuration, keyAction, launcherView, openTabsView } from "./model";
+import type {
+  AwayGapBanner,
+  Column,
+  ItemView,
+  KeyAction,
+  LauncherView,
+  OpenTabRow,
+  PauseBanner,
+  TabCue,
+} from "./model";
 
 const store = createStore(browser.storage);
 const app = document.getElementById("app")!;
@@ -27,6 +37,8 @@ interface PageState {
   items: Item[];
   pauses: Pause[];
   awayGap: AwayGap | null;
+  trackedTabs: TrackedTab[];
+  autoCloseAfter: number;
   selectedBucketId: string | null;
   query: string;
   staleExpanded: boolean;
@@ -34,16 +46,18 @@ interface PageState {
   message: string | null;
 }
 
-// Null until the first read of buckets, items, pauses and awayGap completes,
-// so render() can show nothing actionable before then.
+// Null until the first read of buckets, items, pauses, awayGap, trackedTabs and autoCloseAfter
+// completes, so render() can show nothing actionable before then.
 let state: PageState | null = null;
 
 async function loadData(): Promise<void> {
-  const [buckets, items, pauses, awayGap] = await Promise.all([
+  const [buckets, items, pauses, awayGap, trackedTabs, autoCloseAfter] = await Promise.all([
     store.getBuckets(),
     store.getItems(),
     store.getPauses(),
     store.getAwayGap(),
+    store.getTrackedTabs(),
+    store.getAutoCloseAfter(),
   ]);
   if (state === null) {
     state = {
@@ -51,6 +65,8 @@ async function loadData(): Promise<void> {
       items,
       pauses,
       awayGap,
+      trackedTabs,
+      autoCloseAfter,
       selectedBucketId: null,
       query: "",
       staleExpanded: false,
@@ -62,6 +78,8 @@ async function loadData(): Promise<void> {
     state.items = items;
     state.pauses = pauses;
     state.awayGap = awayGap;
+    state.trackedTabs = trackedTabs;
+    state.autoCloseAfter = autoCloseAfter;
   }
   render();
 }
@@ -341,6 +359,78 @@ function renderAwayGapBanner(banner: AwayGapBanner): HTMLElement {
   return div;
 }
 
+/** The cue's display text, per spec#7: a running timer's own label, or "active"/"kept open"/"closing now". */
+function cueText(cue: TabCue): string {
+  switch (cue.kind) {
+    case "active":
+      return "active";
+    case "keptOpen":
+      return "kept open";
+    case "closing":
+      return "closing now";
+    case "remaining":
+      return cue.label;
+  }
+}
+
+/**
+ * One "Open tabs" row: favicon/title/domain, the cue text and a native Keep open checkbox wired
+ * to `store.setKeepOpen` through `runAction`. Deliberately not a `.item-card`, so the launcher's
+ * keydown keymap and focus restoration ignore it and the checkbox is reachable by Tab as a plain
+ * native control. Not gated by `actionsEnabled()`, so it works while an away-gap banner is pending.
+ */
+function renderOpenTabRow(row: OpenTabRow): HTMLElement {
+  const div = document.createElement("div");
+  div.className = "open-tab-row";
+
+  div.append(renderFavicon(row.favIconUrl));
+
+  const title = document.createElement("span");
+  title.className = "open-tab-title";
+  title.textContent = row.title;
+  div.append(title);
+
+  const domain = document.createElement("span");
+  domain.className = "open-tab-domain";
+  domain.textContent = row.domain;
+  div.append(domain);
+
+  const cue = document.createElement("span");
+  cue.className = "open-tab-cue";
+  cue.textContent = cueText(row.cue);
+  div.append(cue);
+
+  const label = document.createElement("label");
+  label.className = "open-tab-keep-open";
+  const checkbox = document.createElement("input");
+  checkbox.type = "checkbox";
+  checkbox.checked = row.keepOpen;
+  checkbox.addEventListener("change", () => {
+    void runAction(() => store.setKeepOpen(row.tabId, checkbox.checked));
+  });
+  label.append(checkbox);
+  label.append(document.createTextNode(" Keep open"));
+  div.append(label);
+
+  return div;
+}
+
+function renderOpenTabsPanel(rows: OpenTabRow[]): HTMLElement {
+  const section = document.createElement("section");
+  section.className = "open-tabs-panel";
+
+  const heading = document.createElement("h2");
+  heading.textContent = "Open tabs";
+  section.append(heading);
+
+  const list = document.createElement("div");
+  list.className = "open-tabs-list";
+  for (const row of rows) list.append(renderOpenTabRow(row));
+  section.append(list);
+
+  return section;
+}
+
 /** The focused item card's id, column and index within it, so a re-render can restore focus. */
 interface FocusedCardInfo {
   itemId: string;
@@ -427,6 +517,13 @@ function render(): void {
 
   if (view.pauseBanner !== null) app.append(renderPauseBanner(view.pauseBanner));
   if (view.awayGapBanner !== null) app.append(renderAwayGapBanner(view.awayGapBanner));
+
+  const openTabRows = openTabsView({
+    trackedTabs: state.trackedTabs,
+    autoCloseAfter: state.autoCloseAfter,
+    now: Date.now(),
+  });
+  app.append(renderOpenTabsPanel(openTabRows));
 
   const columns = document.createElement("div");
   columns.className = "columns";

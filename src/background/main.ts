@@ -69,7 +69,7 @@ export function start(api: BackgroundApi): void {
     void ensureAlarm(api).then(() => runTick(api, store));
   });
   api.runtime.onStartup.addListener(() => {
-    void ensureAlarm(api).then(() => runTick(api, store));
+    void store.recordAwayGap().then(() => ensureAlarm(api).then(() => runTick(api, store)));
   });
 
   store.subscribe(() => {

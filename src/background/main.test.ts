@@ -221,6 +221,80 @@ describe("start", () => {
     expect(badgeTexts.at(-1)).toBe("");
   });
 
+  test("firing onStartup with lastActiveAt more than 72h old records an away gap and updates lastActiveAt to now", async () => {
+    const storage = new FakeStorage();
+    const alarms = new FakeAlarms();
+    const { api, onStartup } = makeApi(storage, alarms);
+    const oldLastActiveAt = Date.now() - (73 * 60 * 60 * 1000);
+    await storage.local.set({ lastActiveAt: oldLastActiveAt });
+
+    start(api);
+    onStartup.fire();
+    await flush();
+
+    const gap = storage.peek("awayGap") as { start: number; end: number };
+    expect(gap.start).toBe(oldLastActiveAt);
+    expect(gap.end).toBeTypeOf("number");
+    const lastActiveAt = storage.peek("lastActiveAt") as number;
+    expect(lastActiveAt).toBeGreaterThan(oldLastActiveAt);
+  });
+
+  test("firing onStartup with lastActiveAt exactly 72h old leaves awayGap unset", async () => {
+    const storage = new FakeStorage();
+    const alarms = new FakeAlarms();
+    const { api, onStartup } = makeApi(storage, alarms);
+    const exactLastActiveAt = Date.now() - (72 * 60 * 60 * 1000);
+    await storage.local.set({ lastActiveAt: exactLastActiveAt });
+
+    start(api);
+    onStartup.fire();
+    await flush();
+
+    expect(storage.peek("awayGap")).toBeUndefined();
+  });
+
+  test("firing onStartup with no prior lastActiveAt leaves awayGap unset", async () => {
+    const storage = new FakeStorage();
+    const alarms = new FakeAlarms();
+    const { api, onStartup } = makeApi(storage, alarms);
+
+    start(api);
+    onStartup.fire();
+    await flush();
+
+    expect(storage.peek("awayGap")).toBeUndefined();
+  });
+
+  test("an alarm tick with an old lastActiveAt records no gap", async () => {
+    const storage = new FakeStorage();
+    const alarms = new FakeAlarms();
+    const { api } = makeApi(storage, alarms);
+    const oldLastActiveAt = Date.now() - (73 * 60 * 60 * 1000);
+    await storage.local.set({ lastActiveAt: oldLastActiveAt });
+
+    start(api);
+    await flush();
+
+    alarms.onAlarm.fire({ name: "sluice-tick", scheduledTime: 0 });
+    await flush();
+
+    expect(storage.peek("awayGap")).toBeUndefined();
+  });
+
+  test("firing onInstalled records no gap", async () => {
+    const storage = new FakeStorage();
+    const alarms = new FakeAlarms();
+    const { api, onInstalled } = makeApi(storage, alarms);
+    const oldLastActiveAt = Date.now() - (73 * 60 * 60 * 1000);
+    await storage.local.set({ lastActiveAt: oldLastActiveAt });
+
+    start(api);
+    onInstalled.fire({ reason: "install", temporary: false });
+    await flush();
+
+    expect(storage.peek("awayGap")).toBeUndefined();
+  });
+
   test("firing history.onVisited with a queued URL sets that item's lastVisitedAt", async () => {
     const storage = new FakeStorage();
     const alarms = new FakeAlarms();

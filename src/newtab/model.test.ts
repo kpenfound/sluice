@@ -1,9 +1,18 @@
 import { describe, expect, test } from "vitest";
 import type { AwayGap } from "../lib/away";
 import type { ClosedTab, TrackedTab } from "../lib/lifecycle";
-import { HOUR } from "../lib/model";
+import { HOUR, RIFFLES } from "../lib/model";
 import type { Bucket, Item, Pause } from "../lib/model";
-import { dueLabel, formatDuration, keyAction, launcherView, openTabsView, recentlyClosedView } from "./model";
+import type { WashTab } from "../lib/wash";
+import {
+  dueLabel,
+  formatDuration,
+  keyAction,
+  launcherView,
+  openTabsView,
+  recentlyClosedView,
+  triageView,
+} from "./model";
 import type { LauncherViewInput } from "./model";
 
 const NOW = 1_700_000_000_000;
@@ -547,5 +556,251 @@ describe("recentlyClosedView", () => {
     ];
     const view = recentlyClosedView({ recentlyClosed: entries, items });
     expect(view.map((e) => e.id)).toEqual(["not-queued"]);
+  });
+});
+
+function makeWashTab(overrides: Partial<WashTab> = {}): WashTab {
+  return {
+    id: 1,
+    windowId: 1,
+    index: 0,
+    url: "https://example.com/",
+    title: "Example",
+    favIconUrl: "https://example.com/favicon.ico",
+    audible: false,
+    incognito: false,
+    ...overrides,
+  };
+}
+
+describe("triageView: rows", () => {
+  test("lists tabs in triageTabs order, with title/url/domain/favIconUrl", () => {
+    const tabs = [
+      makeWashTab({ id: 2, windowId: 1, index: 1, url: "https://b.example/", title: "B" }),
+      makeWashTab({ id: 1, windowId: 1, index: 0, url: "https://a.example/", title: "A" }),
+    ];
+    const view = triageView({
+      tabs,
+      trackedTabs: [],
+      items: [],
+      buckets,
+      lastBucketId: null,
+      selfTabId: null,
+    });
+    expect(view.rows).toEqual([
+      {
+        tabId: 1,
+        title: "A",
+        url: "https://a.example/",
+        domain: "a.example",
+        favIconUrl: "https://example.com/favicon.ico",
+      },
+      {
+        tabId: 2,
+        title: "B",
+        url: "https://b.example/",
+        domain: "b.example",
+        favIconUrl: "https://example.com/favicon.ico",
+      },
+    ]);
+  });
+
+  test("excludes selfTabId", () => {
+    const tabs = [makeWashTab({ id: 1 }), makeWashTab({ id: 2 })];
+    const view = triageView({
+      tabs,
+      trackedTabs: [],
+      items: [],
+      buckets,
+      lastBucketId: null,
+      selfTabId: 1,
+    });
+    expect(view.rows.map((r) => r.tabId)).toEqual([2]);
+  });
+
+  test("excludes an audible tab", () => {
+    const tabs = [makeWashTab({ id: 1, audible: true }), makeWashTab({ id: 2 })];
+    const view = triageView({
+      tabs,
+      trackedTabs: [],
+      items: [],
+      buckets,
+      lastBucketId: null,
+      selfTabId: null,
+    });
+    expect(view.rows.map((r) => r.tabId)).toEqual([2]);
+  });
+
+  test("excludes a tab tracked with keepOpen: true", () => {
+    const tabs = [makeWashTab({ id: 1 }), makeWashTab({ id: 2 })];
+    const trackedTabs = [makeTrackedTab({ tabId: 1, keepOpen: true })];
+    const view = triageView({
+      tabs,
+      trackedTabs,
+      items: [],
+      buckets,
+      lastBucketId: null,
+      selfTabId: null,
+    });
+    expect(view.rows.map((r) => r.tabId)).toEqual([2]);
+  });
+
+  test("excludes a tab whose normalized URL is already queued", () => {
+    const tabs = [
+      makeWashTab({ id: 1, url: "https://example.com/post?utm_source=x" }),
+      makeWashTab({ id: 2, url: "https://other.example/page" }),
+    ];
+    const items: Item[] = [makeItem({ url: "https://example.com/post", normUrl: "https://example.com/post" })];
+    const view = triageView({
+      tabs,
+      trackedTabs: [],
+      items,
+      buckets,
+      lastBucketId: null,
+      selfTabId: null,
+    });
+    expect(view.rows.map((r) => r.tabId)).toEqual([2]);
+  });
+
+  test("excludes a non-http(s) tab", () => {
+    const tabs = [makeWashTab({ id: 1, url: "about:preferences" }), makeWashTab({ id: 2 })];
+    const view = triageView({
+      tabs,
+      trackedTabs: [],
+      items: [],
+      buckets,
+      lastBucketId: null,
+      selfTabId: null,
+    });
+    expect(view.rows.map((r) => r.tabId)).toEqual([2]);
+  });
+});
+
+describe("triageView: closeCount", () => {
+  test("counts a queued tab and a non-http(s) tab that rows omit", () => {
+    const tabs = [
+      makeWashTab({ id: 1, url: "https://example.com/post" }),
+      makeWashTab({ id: 2, url: "about:preferences" }),
+    ];
+    const items: Item[] = [makeItem({ url: "https://example.com/post", normUrl: "https://example.com/post" })];
+    const view = triageView({
+      tabs,
+      trackedTabs: [],
+      items,
+      buckets,
+      lastBucketId: null,
+      selfTabId: null,
+    });
+    expect(view.rows).toEqual([]);
+    expect(view.closeCount).toBe(2);
+  });
+
+  test("excludes an exempt tab and the self tab", () => {
+    const tabs = [
+      makeWashTab({ id: 1 }),
+      makeWashTab({ id: 2, audible: true }),
+      makeWashTab({ id: 3 }),
+    ];
+    const trackedTabs = [makeTrackedTab({ tabId: 1, keepOpen: true })];
+    const view = triageView({
+      tabs,
+      trackedTabs,
+      items: [],
+      buckets,
+      lastBucketId: null,
+      selfTabId: 3,
+    });
+    expect(view.closeCount).toBe(0);
+  });
+});
+
+describe("triageView: defaultBucketId", () => {
+  test("is lastBucketId when that bucket exists", () => {
+    const view = triageView({
+      tabs: [],
+      trackedTabs: [],
+      items: [],
+      buckets,
+      lastBucketId: "b-side",
+      selfTabId: null,
+    });
+    expect(view.defaultBucketId).toBe("b-side");
+  });
+
+  test("falls back to the lowest-order bucket when lastBucketId's bucket is missing", () => {
+    const view = triageView({
+      tabs: [],
+      trackedTabs: [],
+      items: [],
+      buckets,
+      lastBucketId: "b-nonexistent",
+      selfTabId: null,
+    });
+    expect(view.defaultBucketId).toBe("b-dagger");
+  });
+
+  test("falls back to the lowest-order bucket when lastBucketId is null", () => {
+    const view = triageView({
+      tabs: [],
+      trackedTabs: [],
+      items: [],
+      buckets,
+      lastBucketId: null,
+      selfTabId: null,
+    });
+    expect(view.defaultBucketId).toBe("b-dagger");
+  });
+
+  test("is null when there are no buckets", () => {
+    const view = triageView({
+      tabs: [],
+      trackedTabs: [],
+      items: [],
+      buckets: [],
+      lastBucketId: null,
+      selfTabId: null,
+    });
+    expect(view.defaultBucketId).toBeNull();
+  });
+});
+
+describe("triageView: buckets and riffles", () => {
+  test("buckets are sorted by order", () => {
+    const view = triageView({
+      tabs: [],
+      trackedTabs: [],
+      items: [],
+      buckets,
+      lastBucketId: null,
+      selfTabId: null,
+    });
+    expect(view.buckets.map((b) => b.id)).toEqual(["b-dagger", "b-personal", "b-side"]);
+  });
+
+  test("riffles is RIFFLES", () => {
+    const view = triageView({
+      tabs: [],
+      trackedTabs: [],
+      items: [],
+      buckets,
+      lastBucketId: null,
+      selfTabId: null,
+    });
+    expect(view.riffles).toEqual(RIFFLES);
+  });
+});
+
+describe("triageView: empty tabs", () => {
+  test("rows is empty and closeCount is 0", () => {
+    const view = triageView({
+      tabs: [],
+      trackedTabs: [],
+      items: [],
+      buckets,
+      lastBucketId: null,
+      selfTabId: null,
+    });
+    expect(view.rows).toEqual([]);
+    expect(view.closeCount).toBe(0);
   });
 });

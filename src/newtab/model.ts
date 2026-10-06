@@ -6,6 +6,8 @@ import { isQueuedUrl, remainingTime } from "../lib/lifecycle";
 import type { Bucket, Item, Pause, RiffleId } from "../lib/model";
 import { DAY, HOUR, RIFFLES } from "../lib/model";
 import { runningPause } from "../lib/pauses";
+import type { WashTab } from "../lib/wash";
+import { tabsToWash, triageTabs } from "../lib/wash";
 
 /** One entry in the bucket switcher: a bucket's name, its overdue count and whether it's the one being shown. */
 export interface BucketSwitcherEntry {
@@ -321,4 +323,64 @@ export function recentlyClosedView(input: RecentlyClosedViewInput): ClosedTab[] 
   return recentlyClosed
     .filter((entry) => !isQueuedUrl(entry.url, items))
     .sort((a, b) => b.closedAt - a.closedAt);
+}
+
+/** One row of the triage view's tab list. */
+export interface TriageRow {
+  tabId: number;
+  title: string;
+  url: string;
+  domain: string;
+  favIconUrl: string | undefined;
+}
+
+export interface TriageViewInput {
+  tabs: WashTab[];
+  trackedTabs: TrackedTab[];
+  items: Item[];
+  buckets: Bucket[];
+  lastBucketId: string | null;
+  selfTabId: number | null;
+}
+
+export interface TriageView {
+  rows: TriageRow[];
+  buckets: Bucket[];
+  defaultBucketId: string | null;
+  riffles: RiffleId[];
+  closeCount: number;
+}
+
+/**
+ * The triage view: one row per triage-list tab (selection delegated to `lib/wash.ts`'s
+ * `triageTabs`), the buckets in order, the bucket a row's selector defaults to, the riffle
+ * ladder, and how many tabs a wash would close.
+ */
+export function triageView(input: TriageViewInput): TriageView {
+  const { tabs, trackedTabs, items, buckets, lastBucketId, selfTabId } = input;
+
+  const rows: TriageRow[] = triageTabs(tabs, trackedTabs, items, selfTabId).map((tab) => ({
+    tabId: tab.id as number,
+    title: tab.title ?? "",
+    url: tab.url ?? "",
+    domain: domainOf(tab.url ?? ""),
+    favIconUrl: tab.favIconUrl,
+  }));
+
+  const bucketsByOrder = [...buckets].sort((a, b) => a.order - b.order);
+
+  const defaultBucketId =
+    lastBucketId !== null && buckets.some((b) => b.id === lastBucketId)
+      ? lastBucketId
+      : bucketsByOrder[0]?.id ?? null;
+
+  const closeCount = tabsToWash(tabs, trackedTabs, selfTabId).length;
+
+  return {
+    rows,
+    buckets: bucketsByOrder,
+    defaultBucketId,
+    riffles: RIFFLES,
+    closeCount,
+  };
 }

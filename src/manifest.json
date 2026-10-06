@@ -22,6 +22,9 @@
     },
     "open-launcher": {
       "description": "Open launcher"
+    },
+    "wash": {
+      "description": "Wash: triage and close open tabs"
     }
   },
   "background": {

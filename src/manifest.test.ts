@@ -33,4 +33,10 @@ describe("manifest", () => {
     expect(command.description).toBe("Open launcher");
     expect(command).not.toHaveProperty("suggested_key");
   });
+
+  test("declares the wash command with no suggested key", () => {
+    const command = manifest.commands.wash;
+    expect(command.description).toBeTruthy();
+    expect(command).not.toHaveProperty("suggested_key");
+  });
 });

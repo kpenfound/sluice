@@ -7,8 +7,9 @@ import type { ClosedTab, TrackedTab } from "../lib/lifecycle";
 import type { Bucket, Item, Pause, RiffleId } from "../lib/model";
 import { RIFFLES } from "../lib/model";
 import { createStore } from "../lib/store";
+import type { WashTab } from "../lib/wash";
 import { WASH_MESSAGE_TYPE } from "../lib/wash";
-import { dueLabel, formatDuration, keyAction, launcherView, openTabsView, recentlyClosedView } from "./model";
+import { dueLabel, formatDuration, keyAction, launcherView, openTabsView, recentlyClosedView, triageView } from "./model";
 import type {
   AwayGapBanner,
   Column,
@@ -18,10 +19,15 @@ import type {
   OpenTabRow,
   PauseBanner,
   TabCue,
+  TriageRow,
+  TriageView,
 } from "./model";
 
 const store = createStore(browser.storage);
 const app = document.getElementById("app")!;
+
+/** True at `newtab.html?wash=1`, the triage view's own path (`WASH_PAGE` in `../lib/wash`). */
+const TRIAGE_MODE = new URLSearchParams(window.location.search).get("wash") === "1";
 
 // The most recently rendered view, so event handlers can check whether actions are currently
 // allowed at call time rather than trusting a closure captured when their control was drawn.
@@ -845,4 +851,225 @@ async function init(): Promise<void> {
   });
 }
 
-void init();
+/**
+ * The triage view's own page state: the live reads `triageView` needs, plus which bucket each
+ * row currently has selected (keyed by tabId, independent of `triageView`'s `defaultBucketId` so
+ * a row's choice survives a re-render) and any inline action-rejection message.
+ */
+interface TriagePageState {
+  buckets: Bucket[];
+  items: Item[];
+  trackedTabs: TrackedTab[];
+  lastBucketId: string | null;
+  tabs: WashTab[];
+  selfTabId: number | null;
+  bucketChoices: Map<number, string>;
+  message: string | null;
+}
+
+let triageState: TriagePageState | null = null;
+
+async function loadTriageData(): Promise<void> {
+  const [buckets, items, trackedTabs, lastBucketId, tabs, currentTab] = await Promise.all([
+    store.getBuckets(),
+    store.getItems(),
+    store.getTrackedTabs(),
+    store.getLastBucketId(),
+    browser.tabs.query({ windowType: "normal" }),
+    browser.tabs.getCurrent(),
+  ]);
+  const selfTabId = currentTab?.id ?? null;
+  if (triageState === null) {
+    triageState = {
+      buckets,
+      items,
+      trackedTabs,
+      lastBucketId,
+      tabs,
+      selfTabId,
+      bucketChoices: new Map(),
+      message: null,
+    };
+  } else {
+    triageState.buckets = buckets;
+    triageState.items = items;
+    triageState.trackedTabs = trackedTabs;
+    triageState.lastBucketId = lastBucketId;
+    triageState.tabs = tabs;
+    triageState.selfTabId = selfTabId;
+  }
+  renderTriage();
+}
+
+/** Runs a triage action, showing a rejection as an inline message, the same pattern `runAction` uses for the launcher. */
+async function runTriageAction(fn: () => Promise<unknown>): Promise<void> {
+  if (triageState === null) return;
+  triageState.message = null;
+  try {
+    await fn();
+  } catch (err) {
+    triageState.message = err instanceof Error ? err.message : String(err);
+    renderTriage();
+  }
+}
+
+/** The bucket a row's selector currently shows: its own stored choice, else `defaultBucketId`. */
+function bucketChoiceForRow(row: TriageRow, view: TriageView): string {
+  return triageState?.bucketChoices.get(row.tabId) ?? view.defaultBucketId ?? "";
+}
+
+function renderTriageRow(row: TriageRow, view: TriageView): HTMLElement {
+  const div = document.createElement("div");
+  div.className = "triage-row";
+
+  div.append(renderFavicon(row.favIconUrl));
+
+  const title = document.createElement("span");
+  title.className = "triage-title";
+  title.textContent = row.title;
+  div.append(title);
+
+  const domain = document.createElement("span");
+  domain.className = "triage-domain";
+  domain.textContent = row.domain;
+  div.append(domain);
+
+  const selectedBucketId = bucketChoiceForRow(row, view);
+
+  const bucketButtons = document.createElement("div");
+  bucketButtons.className = "triage-bucket-buttons";
+  for (const bucket of view.buckets) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = bucket.id === selectedBucketId ? "triage-bucket-button selected" : "triage-bucket-button";
+    button.textContent = bucket.name;
+    button.addEventListener("click", () => {
+      if (triageState === null) return;
+      triageState.bucketChoices.set(row.tabId, bucket.id);
+      renderTriage();
+    });
+    bucketButtons.append(button);
+  }
+  div.append(bucketButtons);
+
+  const riffleButtons = document.createElement("div");
+  riffleButtons.className = "triage-riffle-buttons";
+  for (const riffle of view.riffles) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "triage-riffle-button";
+    button.textContent = riffle;
+    button.addEventListener("click", () => {
+      void runTriageAction(() =>
+        store.addItem({
+          url: row.url,
+          title: row.title,
+          favIconUrl: row.favIconUrl,
+          bucketId: bucketChoiceForRow(row, view),
+          riffle,
+        }),
+      );
+    });
+    riffleButtons.append(button);
+  }
+  div.append(riffleButtons);
+
+  return div;
+}
+
+/** Sends the wash message, so the background washes with this (triage) tab as the kept tab. */
+function confirmWash(): void {
+  void runTriageAction(() => browser.runtime.sendMessage({ type: WASH_MESSAGE_TYPE }));
+}
+
+/** Returns this tab to the launcher. Sends no message and closes nothing. */
+function cancelTriage(): void {
+  window.location.href = "newtab.html";
+}
+
+function renderTriage(): void {
+  app.replaceChildren();
+
+  if (triageState === null) {
+    const loading = document.createElement("p");
+    loading.className = "loading";
+    loading.textContent = "Loading…";
+    app.append(loading);
+    return;
+  }
+
+  const view = triageView({
+    tabs: triageState.tabs,
+    trackedTabs: triageState.trackedTabs,
+    items: triageState.items,
+    buckets: triageState.buckets,
+    lastBucketId: triageState.lastBucketId,
+    selfTabId: triageState.selfTabId,
+  });
+
+  if (triageState.message !== null) {
+    const messageEl = document.createElement("p");
+    messageEl.className = "message";
+    messageEl.textContent = triageState.message;
+    app.append(messageEl);
+  }
+
+  const heading = document.createElement("h1");
+  heading.textContent = "Wash";
+  app.append(heading);
+
+  if (view.rows.length === 0) {
+    const empty = document.createElement("p");
+    empty.className = "triage-empty";
+    empty.textContent = "Nothing to triage.";
+    app.append(empty);
+  } else {
+    const list = document.createElement("div");
+    list.className = "triage-list";
+    for (const row of view.rows) list.append(renderTriageRow(row, view));
+    app.append(list);
+  }
+
+  const footer = document.createElement("div");
+  footer.className = "triage-footer";
+
+  const countEl = document.createElement("p");
+  countEl.className = "triage-close-count";
+  countEl.textContent = `${view.closeCount} tab${view.closeCount === 1 ? "" : "s"} will close.`;
+  footer.append(countEl);
+
+  const confirmButton = document.createElement("button");
+  confirmButton.type = "button";
+  confirmButton.className = "triage-confirm";
+  confirmButton.textContent = "Confirm wash";
+  confirmButton.addEventListener("click", confirmWash);
+  footer.append(confirmButton);
+
+  const cancelButton = document.createElement("button");
+  cancelButton.type = "button";
+  cancelButton.className = "triage-cancel";
+  cancelButton.textContent = "Cancel";
+  cancelButton.addEventListener("click", cancelTriage);
+  footer.append(cancelButton);
+
+  app.append(footer);
+}
+
+async function initTriage(): Promise<void> {
+  await loadTriageData();
+
+  const unsubscribe = store.subscribe(() => {
+    void loadTriageData();
+  });
+
+  const timer = setInterval(() => {
+    void loadTriageData();
+  }, 60_000);
+
+  window.addEventListener("unload", () => {
+    unsubscribe();
+    clearInterval(timer);
+  });
+}
+
+void (TRIAGE_MODE ? initTriage() : init());

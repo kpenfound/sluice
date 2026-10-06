@@ -277,6 +277,81 @@
         color: #666;
         flex: none;
       }
+      .triage-list {
+        display: flex;
+        flex-direction: column;
+        gap: 0.5rem;
+        margin-bottom: 1rem;
+      }
+      .triage-row {
+        display: flex;
+        align-items: center;
+        flex-wrap: wrap;
+        gap: 0.5rem;
+        padding: 0.5rem;
+        background: #fff;
+        border: 1px solid #e0e0e0;
+        border-radius: 4px;
+      }
+      .triage-title {
+        font-weight: 600;
+        flex: 1 1 auto;
+        min-width: 0;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .triage-domain {
+        font-size: 0.8rem;
+        color: #666;
+        flex: none;
+      }
+      .triage-bucket-buttons,
+      .triage-riffle-buttons {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.3rem;
+      }
+      .triage-bucket-button,
+      .triage-riffle-button {
+        padding: 0.3rem 0.6rem;
+        border: 1px solid #ccc;
+        border-radius: 4px;
+        background: #fff;
+        cursor: pointer;
+      }
+      .triage-bucket-button.selected {
+        border-color: #333;
+        font-weight: 700;
+      }
+      .triage-empty {
+        color: #666;
+      }
+      .triage-footer {
+        display: flex;
+        align-items: center;
+        gap: 0.75rem;
+      }
+      .triage-close-count {
+        margin: 0;
+        flex: 1 1 auto;
+      }
+      .triage-confirm {
+        padding: 0.4rem 0.8rem;
+        border: 1px solid #a4321e;
+        border-radius: 4px;
+        background: #a4321e;
+        color: #fff;
+        font-weight: 600;
+        cursor: pointer;
+      }
+      .triage-cancel {
+        padding: 0.4rem 0.8rem;
+        border: 1px solid #ccc;
+        border-radius: 4px;
+        background: #fff;
+        cursor: pointer;
+      }
     </style>
     <script type="module" src="newtab.js"></script>
   </head>

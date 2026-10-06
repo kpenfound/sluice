@@ -6,8 +6,8 @@ import type { AwayGap } from "../lib/away";
 import type { Bucket, Item, Pause, RiffleId } from "../lib/model";
 import { RIFFLES } from "../lib/model";
 import { createStore } from "../lib/store";
-import { dueLabel, formatDuration, launcherView } from "./model";
-import type { AwayGapBanner, Column, ItemView, LauncherView, PauseBanner } from "./model";
+import { dueLabel, formatDuration, keyAction, launcherView } from "./model";
+import type { AwayGapBanner, Column, ItemView, KeyAction, LauncherView, PauseBanner } from "./model";
 
 const store = createStore(browser.storage);
 const app = document.getElementById("app")!;
@@ -120,6 +120,7 @@ function renderItemCard(item: ItemView, riffle: RiffleId, view: LauncherView, se
   const card = document.createElement("div");
   card.className = item.overdue ? "item-card overdue" : "item-card";
   card.dataset.itemId = item.id;
+  card.tabIndex = 0;
 
   const header = document.createElement("div");
   header.className = "item-header";
@@ -183,6 +184,7 @@ function renderItemCard(item: ItemView, riffle: RiffleId, view: LauncherView, se
   actions.append(deferButton);
 
   const moveSelect = document.createElement("select");
+  moveSelect.className = "move-select";
   moveSelect.setAttribute("aria-label", `Move ${item.title}`);
   moveSelect.disabled = !view.actionsEnabled;
   for (const option of RIFFLES) {
@@ -199,6 +201,7 @@ function renderItemCard(item: ItemView, riffle: RiffleId, view: LauncherView, se
   actions.append(moveSelect);
 
   const bucketSelect = document.createElement("select");
+  bucketSelect.className = "bucket-select";
   bucketSelect.setAttribute("aria-label", `Change bucket for ${item.title}`);
   bucketSelect.disabled = !view.actionsEnabled;
   for (const bucket of view.buckets) {
@@ -338,7 +341,50 @@ function renderAwayGapBanner(banner: AwayGapBanner): HTMLElement {
   return div;
 }
 
+/** The focused item card's id, column and index within it, so a re-render can restore focus. */
+interface FocusedCardInfo {
+  itemId: string;
+  riffle: string;
+  index: number;
+}
+
+/** Reads which item card (if any) currently holds focus, before render() tears down the DOM. */
+function captureFocusedCardInfo(): FocusedCardInfo | null {
+  const active = document.activeElement;
+  if (!(active instanceof HTMLElement)) return null;
+  const card = active.closest<HTMLElement>(".item-card");
+  if (card === null) return null;
+  const itemId = card.dataset.itemId;
+  if (itemId === undefined) return null;
+  const column = card.closest<HTMLElement>(".column");
+  const riffle = column?.dataset.riffle;
+  if (riffle === undefined) return null;
+  const siblings = card.parentElement !== null ? Array.from(card.parentElement.children) : [];
+  return { itemId, riffle, index: siblings.indexOf(card) };
+}
+
+/**
+ * Restores focus after a render: the same item id if it's still visible, otherwise the item at
+ * the nearest index in the same column, otherwise focus is left alone.
+ */
+function restoreFocusedCard(info: FocusedCardInfo | null): void {
+  if (info === null) return;
+  const cards = Array.from(app.querySelectorAll<HTMLElement>(".item-card"));
+  const exact = cards.find((card) => card.dataset.itemId === info.itemId);
+  if (exact !== undefined) {
+    exact.focus();
+    return;
+  }
+  const column = Array.from(app.querySelectorAll<HTMLElement>(".column")).find(
+    (section) => section.dataset.riffle === info.riffle,
+  );
+  const columnCards = column !== undefined ? Array.from(column.querySelectorAll<HTMLElement>(".item-card")) : [];
+  if (columnCards.length === 0) return;
+  columnCards[Math.min(info.index, columnCards.length - 1)]!.focus();
+}
+
 function render(): void {
+  const focusInfo = captureFocusedCardInfo();
   app.replaceChildren();
 
   if (state === null) {
@@ -386,10 +432,172 @@ function render(): void {
   columns.className = "columns";
   for (const column of view.columns) columns.append(renderColumn(column, view, searching));
   app.append(columns);
+
+  restoreFocusedCard(focusInfo);
+}
+
+/** True when `target` is a form control or editable element the keymap must not fire over. */
+function isTextInputTarget(target: EventTarget | null): boolean {
+  if (!(target instanceof HTMLElement)) return false;
+  if (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.tagName === "SELECT") return true;
+  return target.isContentEditable;
+}
+
+function isSearchInput(target: EventTarget | null): boolean {
+  return target instanceof HTMLInputElement && target.classList.contains("search-input");
+}
+
+function findItemViewById(id: string): ItemView | null {
+  if (currentView === null) return null;
+  for (const column of currentView.columns) {
+    const found = column.items.find((item) => item.id === id);
+    if (found !== undefined) return found;
+  }
+  return null;
+}
+
+/** Moves focus to the previous/next item card within the same column. No-op at either end. */
+function moveFocusWithinColumn(card: HTMLElement, delta: number): void {
+  const list = card.parentElement;
+  if (list === null) return;
+  const cards = Array.from(list.children) as HTMLElement[];
+  const index = cards.indexOf(card);
+  const target = cards[index + delta];
+  target?.focus();
+}
+
+/**
+ * Moves focus to the item at the same index (or the last item) in the nearest column in the
+ * given direction that has visible items, skipping empty columns and a collapsed Stale.
+ */
+function moveFocusToColumn(card: HTMLElement, delta: number): void {
+  const list = card.parentElement;
+  const currentColumn = card.closest<HTMLElement>(".column");
+  if (list === null || currentColumn === null) return;
+  const cardsInColumn = Array.from(list.children) as HTMLElement[];
+  const indexInColumn = cardsInColumn.indexOf(card);
+
+  const columns = Array.from(app.querySelectorAll<HTMLElement>(".column"));
+  const columnIndex = columns.indexOf(currentColumn);
+
+  for (let i = columnIndex + delta; i >= 0 && i < columns.length; i += delta) {
+    const candidates = Array.from(columns[i]!.querySelectorAll<HTMLElement>(".item-card"));
+    if (candidates.length > 0) {
+      candidates[Math.min(indexInColumn, candidates.length - 1)]!.focus();
+      return;
+    }
+  }
+}
+
+function switchBucket(delta: number): void {
+  if (state === null || currentView === null) return;
+  const buckets = currentView.buckets;
+  const index = buckets.findIndex((bucket) => bucket.selected);
+  const target = buckets[Math.min(Math.max(index + delta, 0), buckets.length - 1)];
+  if (target === undefined || target.selected) return;
+  state.selectedBucketId = target.id;
+  render();
+}
+
+function clearSearchAndFocusFirst(): void {
+  if (state === null) return;
+  state.query = "";
+  render();
+  app.querySelector<HTMLElement>(".item-card")?.focus();
+}
+
+/** Acts on the card an item-action key targets: open/defer/resolve via the store, move/changeBucket by focusing its select. */
+function dispatchCardAction(action: KeyAction, card: HTMLElement): void {
+  const itemId = card.dataset.itemId;
+  if (itemId === undefined) return;
+  switch (action) {
+    case "nextItem":
+      moveFocusWithinColumn(card, 1);
+      return;
+    case "prevItem":
+      moveFocusWithinColumn(card, -1);
+      return;
+    case "nextColumn":
+      moveFocusToColumn(card, 1);
+      return;
+    case "prevColumn":
+      moveFocusToColumn(card, -1);
+      return;
+    case "open": {
+      if (!actionsEnabled()) return;
+      const item = findItemViewById(itemId);
+      if (item !== null) void openItem(item);
+      return;
+    }
+    case "defer":
+      if (actionsEnabled()) void runAction(() => store.deferItem(itemId));
+      return;
+    case "resolve":
+      if (actionsEnabled()) void runAction(() => store.resolveItem(itemId));
+      return;
+    case "move":
+      if (actionsEnabled()) card.querySelector<HTMLSelectElement>(".move-select")?.focus();
+      return;
+    case "changeBucket":
+      if (actionsEnabled()) card.querySelector<HTMLSelectElement>(".bucket-select")?.focus();
+      return;
+    default:
+      return;
+  }
+}
+
+/**
+ * The launcher's single keydown handler. Browser shortcuts (Ctrl/Meta/Alt) are left alone.
+ * Every other key goes through model.ts's keymap, so typing in the search box or a select does
+ * nothing but Escape, and every handled key is prevented so it has no other effect (e.g. typing
+ * "/" into a focused control). A card-scoped action that finds no focused card (for example the
+ * Stale header, a native button outside any card) is left untouched, so Enter/Space still toggle
+ * Stale natively.
+ */
+function handleKeydown(event: KeyboardEvent): void {
+  if (event.ctrlKey || event.metaKey || event.altKey) return;
+
+  const action = keyAction(event.key, isTextInputTarget(event.target));
+  if (action === null) return;
+
+  switch (action) {
+    case "focusSearch": {
+      event.preventDefault();
+      app.querySelector<HTMLInputElement>(".search-input")?.focus();
+      return;
+    }
+    case "prevBucket":
+    case "nextBucket": {
+      event.preventDefault();
+      switchBucket(action === "nextBucket" ? 1 : -1);
+      return;
+    }
+    case "clearSearch": {
+      if (isSearchInput(event.target)) {
+        event.preventDefault();
+        clearSearchAndFocusFirst();
+      } else if (event.target instanceof HTMLSelectElement) {
+        const card = event.target.closest<HTMLElement>(".item-card");
+        if (card !== null) {
+          event.preventDefault();
+          card.focus();
+        }
+      }
+      return;
+    }
+    default: {
+      const card = event.target instanceof HTMLElement ? event.target.closest<HTMLElement>(".item-card") : null;
+      if (card === null) return;
+      event.preventDefault();
+      dispatchCardAction(action, card);
+    }
+  }
 }
 
 async function init(): Promise<void> {
   await loadData();
+
+  document.addEventListener("keydown", handleKeydown);
 
   const unsubscribe = store.subscribe(() => {
     void loadData();
@@ -398,6 +606,7 @@ async function init(): Promise<void> {
   const timer = setInterval(() => render(), 60_000);
 
   window.addEventListener("unload", () => {
+    document.removeEventListener("keydown", handleKeydown);
     unsubscribe();
     clearInterval(timer);
   });

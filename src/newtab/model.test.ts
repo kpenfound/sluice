@@ -1,8 +1,9 @@
 import { describe, expect, test } from "vitest";
 import type { AwayGap } from "../lib/away";
+import type { ClosedTab, TrackedTab } from "../lib/lifecycle";
 import { HOUR } from "../lib/model";
 import type { Bucket, Item, Pause } from "../lib/model";
-import { dueLabel, formatDuration, keyAction, launcherView } from "./model";
+import { dueLabel, formatDuration, keyAction, launcherView, openTabsView, recentlyClosedView } from "./model";
 import type { LauncherViewInput } from "./model";
 
 const NOW = 1_700_000_000_000;
@@ -387,5 +388,164 @@ describe("keyAction", () => {
     expect(keyAction("/", true)).toBeNull();
     expect(keyAction("d", true)).toBeNull();
     expect(keyAction("Escape", true)).toBe("clearSearch");
+  });
+});
+
+function makeTrackedTab(overrides: Partial<TrackedTab> = {}): TrackedTab {
+  return {
+    tabId: 1,
+    windowId: 1,
+    trackId: "t-1",
+    url: "https://example.com/post",
+    title: "A post",
+    favIconUrl: "https://example.com/favicon.ico",
+    keepOpen: false,
+    inactiveSince: NOW - HOUR,
+    ...overrides,
+  };
+}
+
+describe("openTabsView: cues", () => {
+  test("active for a tab with no running timer", () => {
+    const tab = makeTrackedTab({ inactiveSince: null, keepOpen: false });
+    const [row] = openTabsView({ trackedTabs: [tab], autoCloseAfter: 2 * HOUR, now: NOW });
+    expect(row?.cue).toEqual({ kind: "active" });
+  });
+
+  test("active takes priority over keepOpen when both could apply", () => {
+    const tab = makeTrackedTab({ inactiveSince: null, keepOpen: true });
+    const [row] = openTabsView({ trackedTabs: [tab], autoCloseAfter: 2 * HOUR, now: NOW });
+    expect(row?.cue).toEqual({ kind: "active" });
+  });
+
+  test("keptOpen for a kept-open tab with a running timer", () => {
+    const tab = makeTrackedTab({ inactiveSince: NOW - HOUR, keepOpen: true });
+    const [row] = openTabsView({ trackedTabs: [tab], autoCloseAfter: 2 * HOUR, now: NOW });
+    expect(row?.cue).toEqual({ kind: "keptOpen" });
+  });
+
+  test("remaining with a 'closes in' label while time is left", () => {
+    const tab = makeTrackedTab({ inactiveSince: NOW - HOUR, keepOpen: false });
+    const [row] = openTabsView({ trackedTabs: [tab], autoCloseAfter: 2 * HOUR, now: NOW });
+    expect(row?.cue).toEqual({ kind: "remaining", ms: HOUR, label: "closes in 1h" });
+  });
+
+  test("closing exactly at the remaining = 0 boundary", () => {
+    const tab = makeTrackedTab({ inactiveSince: NOW - 2 * HOUR, keepOpen: false });
+    const [row] = openTabsView({ trackedTabs: [tab], autoCloseAfter: 2 * HOUR, now: NOW });
+    expect(row?.cue).toEqual({ kind: "closing" });
+  });
+
+  test("closing past the boundary", () => {
+    const tab = makeTrackedTab({ inactiveSince: NOW - 3 * HOUR, keepOpen: false });
+    const [row] = openTabsView({ trackedTabs: [tab], autoCloseAfter: 2 * HOUR, now: NOW });
+    expect(row?.cue).toEqual({ kind: "closing" });
+  });
+
+  test("a changed autoCloseAfter changes the remaining time", () => {
+    const tab = makeTrackedTab({ inactiveSince: NOW - HOUR, keepOpen: false });
+    const shortTimeout = openTabsView({ trackedTabs: [tab], autoCloseAfter: HOUR, now: NOW });
+    const longTimeout = openTabsView({ trackedTabs: [tab], autoCloseAfter: 3 * HOUR, now: NOW });
+    expect(shortTimeout[0]?.cue).toEqual({ kind: "closing" });
+    expect(longTimeout[0]?.cue).toEqual({ kind: "remaining", ms: 2 * HOUR, label: "closes in 2h" });
+  });
+
+  test("carries title, url, domain, favIconUrl and keepOpen through", () => {
+    const tab = makeTrackedTab({
+      tabId: 42,
+      title: "A post",
+      url: "https://example.com/post",
+      favIconUrl: "https://example.com/favicon.ico",
+      keepOpen: true,
+      inactiveSince: NOW - HOUR,
+    });
+    const [row] = openTabsView({ trackedTabs: [tab], autoCloseAfter: 2 * HOUR, now: NOW });
+    expect(row).toMatchObject({
+      tabId: 42,
+      title: "A post",
+      url: "https://example.com/post",
+      domain: "example.com",
+      favIconUrl: "https://example.com/favicon.ico",
+      keepOpen: true,
+    });
+  });
+});
+
+describe("openTabsView: ordering", () => {
+  test("running-timer rows come first, soonest-closing first, then active/keptOpen rows", () => {
+    const tabs = [
+      makeTrackedTab({ tabId: 1, inactiveSince: NOW - 90 * 60 * 1000 }), // remaining 30m
+      makeTrackedTab({ tabId: 2, inactiveSince: null }), // active
+      makeTrackedTab({ tabId: 3, inactiveSince: NOW - 3 * HOUR }), // closing (remaining -1h)
+      makeTrackedTab({ tabId: 4, keepOpen: true, inactiveSince: NOW - HOUR }), // kept open
+      makeTrackedTab({ tabId: 5, inactiveSince: NOW - 30 * 60 * 1000 }), // remaining 90m
+    ];
+    const rows = openTabsView({ trackedTabs: tabs, autoCloseAfter: 2 * HOUR, now: NOW });
+    expect(rows.map((r) => r.tabId)).toEqual([3, 1, 5, 2, 4]);
+  });
+
+  test("ties on remaining time break by ascending tabId", () => {
+    const tabs = [
+      makeTrackedTab({ tabId: 20, inactiveSince: NOW - HOUR }),
+      makeTrackedTab({ tabId: 10, inactiveSince: NOW - HOUR }),
+    ];
+    const rows = openTabsView({ trackedTabs: tabs, autoCloseAfter: 2 * HOUR, now: NOW });
+    expect(rows.map((r) => r.tabId)).toEqual([10, 20]);
+  });
+
+  test("ties between active/keptOpen rows (no running timer) break by ascending tabId", () => {
+    const tabs = [
+      makeTrackedTab({ tabId: 20, inactiveSince: null }),
+      makeTrackedTab({ tabId: 10, keepOpen: true, inactiveSince: NOW - HOUR }),
+    ];
+    const rows = openTabsView({ trackedTabs: tabs, autoCloseAfter: 2 * HOUR, now: NOW });
+    expect(rows.map((r) => r.tabId)).toEqual([10, 20]);
+  });
+});
+
+function makeClosedTab(overrides: Partial<ClosedTab> = {}): ClosedTab {
+  return {
+    id: "c-1",
+    trackId: "t-1",
+    url: "https://example.com/post",
+    normUrl: "https://example.com/post",
+    title: "A post",
+    favIconUrl: "https://example.com/favicon.ico",
+    closedAt: NOW,
+    ...overrides,
+  };
+}
+
+describe("recentlyClosedView", () => {
+  test("lists entries newest first by closedAt", () => {
+    const entries = [
+      makeClosedTab({ id: "oldest", url: "https://a.example/1", closedAt: NOW - 3 * HOUR }),
+      makeClosedTab({ id: "newest", url: "https://a.example/2", closedAt: NOW - 1 * HOUR }),
+      makeClosedTab({ id: "middle", url: "https://a.example/3", closedAt: NOW - 2 * HOUR }),
+    ];
+    const view = recentlyClosedView({ recentlyClosed: entries, items: [] });
+    expect(view.map((e) => e.id)).toEqual(["newest", "middle", "oldest"]);
+  });
+
+  test("hides an entry whose URL was queued after it closed, matched through normalize()", () => {
+    const entries = [
+      makeClosedTab({ id: "queued", url: "https://example.com/post?utm_source=x" }),
+      makeClosedTab({ id: "not-queued", url: "https://other.example/page" }),
+    ];
+    const items: Item[] = [
+      {
+        id: "item-1",
+        url: "https://example.com/post",
+        normUrl: "https://example.com/post",
+        title: "A post",
+        bucketId: "b-dagger",
+        riffle: "72h",
+        queuedAt: NOW,
+        riffleEnteredAt: NOW,
+        lastVisitedAt: null,
+      },
+    ];
+    const view = recentlyClosedView({ recentlyClosed: entries, items });
+    expect(view.map((e) => e.id)).toEqual(["not-queued"]);
   });
 });

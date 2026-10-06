@@ -1,6 +1,8 @@
 import type { AwayGap } from "../lib/away";
 import { itemsFreedByGap } from "../lib/away";
 import { isOverdue, overdueCounts, remaining, timeInRiffle, totalAge } from "../lib/due";
+import type { ClosedTab, TrackedTab } from "../lib/lifecycle";
+import { isQueuedUrl, remainingTime } from "../lib/lifecycle";
 import type { Bucket, Item, Pause, RiffleId } from "../lib/model";
 import { DAY, HOUR, RIFFLES } from "../lib/model";
 import { runningPause } from "../lib/pauses";
@@ -239,4 +241,84 @@ const KEY_ACTIONS: Record<string, KeyAction> = {
 export function keyAction(key: string, inTextInput: boolean): KeyAction | null {
   if (inTextInput) return key === "Escape" ? "clearSearch" : null;
   return KEY_ACTIONS[key] ?? null;
+}
+
+/** A tracked tab's remaining-time cue, shown on Sluice's own pages rather than on the tab itself. */
+export type TabCue =
+  | { kind: "active" }
+  | { kind: "keptOpen" }
+  | { kind: "closing" }
+  | { kind: "remaining"; ms: number; label: string };
+
+/** One row of the new tab page's "Open tabs" list. */
+export interface OpenTabRow {
+  tabId: number;
+  title: string;
+  url: string;
+  domain: string;
+  favIconUrl: string | undefined;
+  keepOpen: boolean;
+  cue: TabCue;
+}
+
+export interface OpenTabsViewInput {
+  trackedTabs: TrackedTab[];
+  autoCloseAfter: number;
+  now: number;
+}
+
+/**
+ * `tab`'s cue and the value rows are sorted by: a running timer's actual remaining ms (so
+ * `"closing"` rows, always `<= 0`, sort ahead of positive `"remaining"` rows), or `Infinity` for
+ * `"active"`/`"keptOpen"` rows, which have no running timer and sort after every running one.
+ */
+function tabCue(tab: TrackedTab, autoCloseAfter: number, now: number): { cue: TabCue; sortKey: number } {
+  if (tab.inactiveSince === null) return { cue: { kind: "active" }, sortKey: Infinity };
+  if (tab.keepOpen) return { cue: { kind: "keptOpen" }, sortKey: Infinity };
+  const ms = remainingTime(tab, autoCloseAfter, now) as number;
+  if (ms <= 0) return { cue: { kind: "closing" }, sortKey: ms };
+  return { cue: { kind: "remaining", ms, label: `closes in ${formatDuration(ms)}` }, sortKey: ms };
+}
+
+/**
+ * The "Open tabs" list: each tracked tab with its remaining-time cue. Rows with a running timer
+ * come first, ascending by remaining time (so a `"closing"` row sorts ahead of a `"remaining"`
+ * one); `tabId` breaks ties.
+ */
+export function openTabsView(input: OpenTabsViewInput): OpenTabRow[] {
+  const { trackedTabs, autoCloseAfter, now } = input;
+
+  const rows = trackedTabs.map((tab) => {
+    const { cue, sortKey } = tabCue(tab, autoCloseAfter, now);
+    const row: OpenTabRow = {
+      tabId: tab.tabId,
+      title: tab.title,
+      url: tab.url,
+      domain: domainOf(tab.url),
+      favIconUrl: tab.favIconUrl,
+      keepOpen: tab.keepOpen,
+      cue,
+    };
+    return { row, sortKey };
+  });
+
+  rows.sort((a, b) => {
+    if (a.sortKey !== b.sortKey) return a.sortKey - b.sortKey;
+    return a.row.tabId - b.row.tabId;
+  });
+
+  return rows.map((r) => r.row);
+}
+
+export interface RecentlyClosedViewInput {
+  recentlyClosed: ClosedTab[];
+  items: Item[];
+}
+
+/** The "Recently closed" list: newest first, hiding any entry whose URL has since been queued. */
+export function recentlyClosedView(input: RecentlyClosedViewInput): ClosedTab[] {
+  const { recentlyClosed, items } = input;
+  return recentlyClosed
+    .filter((entry) => !isQueuedUrl(entry.url, items))
+    .sort((a, b) => b.closedAt - a.closedAt);
 }

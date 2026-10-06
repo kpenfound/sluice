@@ -7,6 +7,7 @@ import type { ClosedTab, TrackedTab } from "../lib/lifecycle";
 import type { Bucket, Item, Pause, RiffleId } from "../lib/model";
 import { RIFFLES } from "../lib/model";
 import { createStore } from "../lib/store";
+import { WASH_MESSAGE_TYPE } from "../lib/wash";
 import { dueLabel, formatDuration, keyAction, launcherView, openTabsView, recentlyClosedView } from "./model";
 import type {
   AwayGapBanner,
@@ -419,13 +420,36 @@ function renderOpenTabRow(row: OpenTabRow): HTMLElement {
   return div;
 }
 
+/** Sends the wash message, so the background washes straight away with this tab as the kept tab. No confirmation step. */
+function washNow(): void {
+  void runAction(() => browser.runtime.sendMessage({ type: WASH_MESSAGE_TYPE }));
+}
+
+/**
+ * The "Wash now" button: sends the wash runtime message with no confirmation step, through the
+ * existing `runAction` so a rejection shows the inline message. Not gated by `actionsEnabled()`
+ * and deliberately not a `.item-card`, the same as the Recently closed panel's controls.
+ */
+function renderWashNowButton(): HTMLElement {
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "wash-now-button";
+  button.textContent = "Wash now";
+  button.addEventListener("click", washNow);
+  return button;
+}
+
 function renderOpenTabsPanel(rows: OpenTabRow[]): HTMLElement {
   const section = document.createElement("section");
   section.className = "open-tabs-panel";
 
+  const header = document.createElement("div");
+  header.className = "open-tabs-header";
   const heading = document.createElement("h2");
   heading.textContent = "Open tabs";
-  section.append(heading);
+  header.append(heading);
+  header.append(renderWashNowButton());
+  section.append(header);
 
   const list = document.createElement("div");
   list.className = "open-tabs-list";

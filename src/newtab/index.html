@@ -214,6 +214,50 @@
         color: #666;
         flex: none;
       }
+      .recently-closed-panel {
+        margin-bottom: 1rem;
+        background: #fff;
+        border: 1px solid #e0e0e0;
+        border-radius: 4px;
+        padding: 0.5rem 0.75rem;
+      }
+      .recently-closed-panel h2 {
+        font-size: 0.85rem;
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+        color: #666;
+        margin: 0 0 0.5rem;
+      }
+      .closed-tabs-list {
+        display: flex;
+        flex-direction: column;
+        gap: 0.4rem;
+      }
+      .closed-tab-row {
+        display: flex;
+        align-items: center;
+        flex-wrap: wrap;
+        gap: 0.5rem;
+        padding: 0.3rem 0;
+        border-bottom: 1px solid #eee;
+      }
+      .closed-tab-row:last-child {
+        border-bottom: none;
+      }
+      .closed-tab-title {
+        font-weight: 600;
+        flex: 1 1 auto;
+        min-width: 0;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .closed-tab-domain,
+      .closed-tab-time {
+        font-size: 0.8rem;
+        color: #666;
+        flex: none;
+      }
     </style>
     <script type="module" src="newtab.js"></script>
   </head>

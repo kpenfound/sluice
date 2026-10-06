@@ -3,11 +3,11 @@
 // DOM, holds page state (the selected bucket, search query and Stale's
 // expanded/collapsed state) and wires store actions to mouse events.
 import type { AwayGap } from "../lib/away";
-import type { TrackedTab } from "../lib/lifecycle";
+import type { ClosedTab, TrackedTab } from "../lib/lifecycle";
 import type { Bucket, Item, Pause, RiffleId } from "../lib/model";
 import { RIFFLES } from "../lib/model";
 import { createStore } from "../lib/store";
-import { dueLabel, formatDuration, keyAction, launcherView, openTabsView } from "./model";
+import { dueLabel, formatDuration, keyAction, launcherView, openTabsView, recentlyClosedView } from "./model";
 import type {
   AwayGapBanner,
   Column,
@@ -39,6 +39,7 @@ interface PageState {
   awayGap: AwayGap | null;
   trackedTabs: TrackedTab[];
   autoCloseAfter: number;
+  recentlyClosed: ClosedTab[];
   selectedBucketId: string | null;
   query: string;
   staleExpanded: boolean;
@@ -51,13 +52,14 @@ interface PageState {
 let state: PageState | null = null;
 
 async function loadData(): Promise<void> {
-  const [buckets, items, pauses, awayGap, trackedTabs, autoCloseAfter] = await Promise.all([
+  const [buckets, items, pauses, awayGap, trackedTabs, autoCloseAfter, recentlyClosed] = await Promise.all([
     store.getBuckets(),
     store.getItems(),
     store.getPauses(),
     store.getAwayGap(),
     store.getTrackedTabs(),
     store.getAutoCloseAfter(),
+    store.getRecentlyClosed(),
   ]);
   if (state === null) {
     state = {
@@ -67,6 +69,7 @@ async function loadData(): Promise<void> {
       awayGap,
       trackedTabs,
       autoCloseAfter,
+      recentlyClosed,
       selectedBucketId: null,
       query: "",
       staleExpanded: false,
@@ -80,6 +83,7 @@ async function loadData(): Promise<void> {
     state.awayGap = awayGap;
     state.trackedTabs = trackedTabs;
     state.autoCloseAfter = autoCloseAfter;
+    state.recentlyClosed = recentlyClosed;
   }
   render();
 }
@@ -431,6 +435,111 @@ function renderOpenTabsPanel(rows: OpenTabRow[]): HTMLElement {
   return section;
 }
 
+function domainOf(url: string): string {
+  try {
+    return new URL(url).hostname;
+  } catch {
+    return "";
+  }
+}
+
+/**
+ * One "Recently closed" row: favicon/title/domain/close time, a Reopen button, a bucket and
+ * riffle `<select>` and a File button. Deliberately not a `.item-card`, so the launcher's keydown
+ * keymap and focus restoration ignore it and its controls are reachable by Tab as plain native
+ * controls. Not gated by `actionsEnabled()`, so it works while an away-gap banner is pending.
+ */
+function renderClosedRow(entry: ClosedTab, buckets: Bucket[]): HTMLElement {
+  const div = document.createElement("div");
+  div.className = "closed-tab-row";
+
+  div.append(renderFavicon(entry.favIconUrl));
+
+  const title = document.createElement("span");
+  title.className = "closed-tab-title";
+  title.textContent = entry.title;
+  div.append(title);
+
+  const domain = document.createElement("span");
+  domain.className = "closed-tab-domain";
+  domain.textContent = domainOf(entry.url);
+  div.append(domain);
+
+  const closedAt = document.createElement("span");
+  closedAt.className = "closed-tab-time";
+  closedAt.textContent = new Date(entry.closedAt).toLocaleString();
+  div.append(closedAt);
+
+  const reopenButton = document.createElement("button");
+  reopenButton.type = "button";
+  reopenButton.textContent = "Reopen";
+  reopenButton.addEventListener("click", () => {
+    void runAction(async () => {
+      await browser.tabs.create({ url: entry.url });
+      await store.removeClosed(entry.id);
+    });
+  });
+  div.append(reopenButton);
+
+  const bucketSelect = document.createElement("select");
+  bucketSelect.className = "closed-bucket-select";
+  bucketSelect.setAttribute("aria-label", `Bucket for ${entry.title}`);
+  for (const bucket of buckets) {
+    const option = document.createElement("option");
+    option.value = bucket.id;
+    option.textContent = bucket.name;
+    bucketSelect.append(option);
+  }
+  div.append(bucketSelect);
+
+  const riffleSelect = document.createElement("select");
+  riffleSelect.className = "closed-riffle-select";
+  riffleSelect.setAttribute("aria-label", `Riffle for ${entry.title}`);
+  for (const riffle of RIFFLES) {
+    const option = document.createElement("option");
+    option.value = riffle;
+    option.textContent = riffle;
+    riffleSelect.append(option);
+  }
+  riffleSelect.value = "72h";
+  div.append(riffleSelect);
+
+  const fileButton = document.createElement("button");
+  fileButton.type = "button";
+  fileButton.textContent = "File";
+  fileButton.addEventListener("click", () => {
+    void runAction(async () => {
+      await store.addItem({
+        url: entry.url,
+        title: entry.title,
+        favIconUrl: entry.favIconUrl,
+        bucketId: bucketSelect.value,
+        riffle: riffleSelect.value as RiffleId,
+      });
+      await store.removeClosed(entry.id);
+    });
+  });
+  div.append(fileButton);
+
+  return div;
+}
+
+function renderRecentlyClosedPanel(entries: ClosedTab[], buckets: Bucket[]): HTMLElement {
+  const section = document.createElement("section");
+  section.className = "recently-closed-panel";
+
+  const heading = document.createElement("h2");
+  heading.textContent = "Recently closed";
+  section.append(heading);
+
+  const list = document.createElement("div");
+  list.className = "closed-tabs-list";
+  for (const entry of entries) list.append(renderClosedRow(entry, buckets));
+  section.append(list);
+
+  return section;
+}
+
 /** The focused item card's id, column and index within it, so a re-render can restore focus. */
 interface FocusedCardInfo {
   itemId: string;
@@ -524,6 +633,9 @@ function render(): void {
     now: Date.now(),
   });
   app.append(renderOpenTabsPanel(openTabRows));
+
+  const closedEntries = recentlyClosedView({ recentlyClosed: state.recentlyClosed, items: state.items });
+  app.append(renderRecentlyClosedPanel(closedEntries, state.buckets));
 
   const columns = document.createElement("div");
   columns.className = "columns";

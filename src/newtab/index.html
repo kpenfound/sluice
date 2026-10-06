@@ -3,7 +3,142 @@
   <head>
     <meta charset="utf-8" />
     <title>New Tab</title>
+    <style>
+      body {
+        font-family: system-ui, sans-serif;
+        margin: 0;
+        padding: 1rem;
+        color: #1a1a1a;
+        background: #fafafa;
+      }
+      .loading {
+        color: #666;
+      }
+      .message {
+        color: #a4321e;
+        font-weight: 600;
+      }
+      .bucket-switcher {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.5rem;
+        margin-bottom: 0.75rem;
+      }
+      .bucket-button {
+        padding: 0.4rem 0.8rem;
+        border: 1px solid #ccc;
+        border-radius: 4px;
+        background: #fff;
+        cursor: pointer;
+      }
+      .bucket-button.selected {
+        border-color: #333;
+        font-weight: 700;
+      }
+      .search-input {
+        display: block;
+        width: 100%;
+        max-width: 24rem;
+        margin-bottom: 1rem;
+        padding: 0.4rem 0.6rem;
+        border: 1px solid #ccc;
+        border-radius: 4px;
+      }
+      .columns {
+        display: flex;
+        gap: 1rem;
+        align-items: flex-start;
+      }
+      .column {
+        flex: 1;
+        min-width: 0;
+        background: #fff;
+        border: 1px solid #e0e0e0;
+        border-radius: 4px;
+        padding: 0.5rem;
+      }
+      .column h2 {
+        font-size: 0.85rem;
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+        color: #666;
+        margin: 0 0 0.5rem;
+      }
+      .stale-header {
+        width: 100%;
+        text-align: left;
+        font-size: 0.85rem;
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+        color: #666;
+        background: none;
+        border: none;
+        padding: 0 0 0.5rem;
+        cursor: pointer;
+      }
+      .item-list {
+        display: flex;
+        flex-direction: column;
+        gap: 0.5rem;
+      }
+      .item-card {
+        border: 1px solid #ddd;
+        border-radius: 4px;
+        padding: 0.5rem;
+        background: #fdfdfd;
+      }
+      .item-card.overdue {
+        border-color: #a4321e;
+        background: #fdece8;
+      }
+      .item-header {
+        display: flex;
+        align-items: center;
+        gap: 0.4rem;
+      }
+      .favicon {
+        width: 16px;
+        height: 16px;
+        flex: none;
+      }
+      .favicon-placeholder {
+        display: inline-block;
+        border-radius: 2px;
+        background: #ccc;
+      }
+      .item-title {
+        font-weight: 600;
+        color: inherit;
+        text-decoration: none;
+      }
+      .item-title:hover {
+        text-decoration: underline;
+      }
+      .item-bucket,
+      .item-domain,
+      .item-meta,
+      .item-due {
+        display: block;
+        font-size: 0.8rem;
+        color: #666;
+      }
+      .item-due {
+        font-weight: 600;
+        color: #333;
+      }
+      .item-card.overdue .item-due {
+        color: #a4321e;
+      }
+      .item-actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.4rem;
+        margin-top: 0.4rem;
+      }
+    </style>
     <script type="module" src="newtab.js"></script>
   </head>
-  <body></body>
+  <body>
+    <div id="app"></div>
+  </body>
 </html>

@@ -5,6 +5,8 @@ import type { Item } from "./model";
 import { HOUR } from "./model";
 import { isOverdue } from "./due";
 import { AWAY_GAP_THRESHOLD } from "./away";
+import { DEFAULT_AUTO_CLOSE_AFTER, RECENTLY_CLOSED_MAX_AGE } from "./lifecycle";
+import type { TrackedTab } from "./lifecycle";
 
 type Listener = (changes: Record<string, StorageChange>, areaName: string) => void;
 
@@ -17,6 +19,9 @@ class FakeStorage implements StorageNamespace {
   private data: Record<string, unknown> = {};
   private listeners: Listener[] = [];
 
+  /** Every key set the test fake has seen, one entry per `local.set` call, in order. */
+  setCalls: string[][] = [];
+
   local = {
     get: (keys: string | string[]): Promise<Record<string, unknown>> => {
       const keyList = Array.isArray(keys) ? keys : [keys];
@@ -27,6 +32,7 @@ class FakeStorage implements StorageNamespace {
       return Promise.resolve(result);
     },
     set: (items: Record<string, unknown>): Promise<void> => {
+      this.setCalls.push(Object.keys(items));
       const changes: Record<string, StorageChange> = {};
       for (const [key, newValue] of Object.entries(items)) {
         changes[key] = { oldValue: this.data[key], newValue };
@@ -78,6 +84,20 @@ function createTestStore(storage: FakeStorage = new FakeStorage()) {
   const newId = makeIds();
   const store = createStore(storage, { now: clock.now, newId });
   return { storage, clock, newId, store };
+}
+
+/** A tracked tab fixture, with every field overridable. */
+function makeTrackedTab(overrides: Partial<TrackedTab> = {}): TrackedTab {
+  return {
+    tabId: 1,
+    windowId: 1,
+    trackId: "track-1",
+    url: "https://example.com/",
+    title: "Example",
+    keepOpen: false,
+    inactiveSince: null,
+    ...overrides,
+  };
 }
 
 describe("getItems and getPauses", () => {
@@ -1034,5 +1054,405 @@ describe("awayGap", () => {
 
     await store.dismissAwayGap();
     expect(received).toHaveLength(1);
+  });
+});
+
+describe("lifecycle", () => {
+  describe("getTrackedTabs", () => {
+    test("returns [] when absent and writes nothing", async () => {
+      const { storage, store } = createTestStore();
+      expect(await store.getTrackedTabs()).toEqual([]);
+      expect(storage.peek("trackedTabs")).toBeUndefined();
+    });
+  });
+
+  describe("replaceTrackedTabs", () => {
+    test("replaces the whole array", async () => {
+      const { store } = createTestStore();
+      await store.replaceTrackedTabs([makeTrackedTab({ tabId: 1 })]);
+      expect(await store.getTrackedTabs()).toEqual([makeTrackedTab({ tabId: 1 })]);
+
+      await store.replaceTrackedTabs([makeTrackedTab({ tabId: 2 })]);
+      expect(await store.getTrackedTabs()).toEqual([makeTrackedTab({ tabId: 2 })]);
+    });
+  });
+
+  describe("trackTab", () => {
+    test("adds a new record", async () => {
+      const { store } = createTestStore();
+      const tab = makeTrackedTab();
+      const result = await store.trackTab(tab);
+      expect(result).toEqual(tab);
+      expect(await store.getTrackedTabs()).toEqual([tab]);
+    });
+
+    test("upserts by tabId, replacing the existing record", async () => {
+      const { store } = createTestStore();
+      await store.trackTab(makeTrackedTab({ tabId: 1, title: "Old" }));
+      const updated = makeTrackedTab({ tabId: 1, title: "New" });
+
+      const result = await store.trackTab(updated);
+
+      expect(result).toEqual(updated);
+      expect(await store.getTrackedTabs()).toEqual([updated]);
+    });
+  });
+
+  describe("updateTrackedTab", () => {
+    test("patches url, title, favIconUrl and windowId", async () => {
+      const { store } = createTestStore();
+      await store.trackTab(makeTrackedTab({ tabId: 1 }));
+
+      const updated = await store.updateTrackedTab(1, {
+        title: "New title",
+        url: "https://example.com/new",
+        favIconUrl: "https://example.com/f.ico",
+        windowId: 2,
+      });
+
+      expect(updated).toEqual({
+        ...makeTrackedTab({ tabId: 1 }),
+        title: "New title",
+        url: "https://example.com/new",
+        favIconUrl: "https://example.com/f.ico",
+        windowId: 2,
+      });
+    });
+
+    test("returns null and writes nothing for an unknown tab", async () => {
+      const { storage, store } = createTestStore();
+      await store.trackTab(makeTrackedTab({ tabId: 1 }));
+      const before = storage.peek("trackedTabs");
+
+      const result = await store.updateTrackedTab(999, { title: "New" });
+
+      expect(result).toBeNull();
+      expect(storage.peek("trackedTabs")).toBe(before);
+    });
+
+    test("returns null and writes nothing when the patch changes nothing", async () => {
+      const { storage, store } = createTestStore();
+      await store.trackTab(makeTrackedTab({ tabId: 1, title: "Same" }));
+      const before = storage.peek("trackedTabs");
+
+      const result = await store.updateTrackedTab(1, { title: "Same" });
+
+      expect(result).toBeNull();
+      expect(storage.peek("trackedTabs")).toBe(before);
+    });
+  });
+
+  describe("activateTab", () => {
+    test("clears the activated tab's inactiveSince", async () => {
+      const { clock, store } = createTestStore();
+      await store.trackTab(makeTrackedTab({ tabId: 1, windowId: 1, inactiveSince: clock.now() - HOUR }));
+
+      await store.activateTab(1, 1);
+
+      const [tab] = await store.getTrackedTabs();
+      expect(tab!.inactiveSince).toBeNull();
+    });
+
+    test("starts the timer of the previously active tab in the same window only", async () => {
+      const { clock, store } = createTestStore();
+      await store.trackTab(makeTrackedTab({ tabId: 1, windowId: 1, inactiveSince: null }));
+      await store.trackTab(makeTrackedTab({ tabId: 2, windowId: 1, inactiveSince: clock.now() - HOUR }));
+      await store.trackTab(makeTrackedTab({ tabId: 3, windowId: 2, inactiveSince: null }));
+
+      await store.activateTab(2, 1);
+
+      const byId = new Map((await store.getTrackedTabs()).map((tab) => [tab.tabId, tab]));
+      expect(byId.get(1)!.inactiveSince).toBe(clock.now());
+      expect(byId.get(2)!.inactiveSince).toBeNull();
+      expect(byId.get(3)!.inactiveSince).toBeNull();
+    });
+
+    test("writes once", async () => {
+      const { storage, store } = createTestStore();
+      await store.trackTab(makeTrackedTab({ tabId: 1, windowId: 1 }));
+      storage.setCalls = [];
+
+      await store.activateTab(1, 1);
+
+      expect(storage.setCalls).toHaveLength(1);
+    });
+  });
+
+  describe("setKeepOpen", () => {
+    test("rejects an unknown tab", async () => {
+      const { store } = createTestStore();
+      await expect(store.setKeepOpen(999, true)).rejects.toThrow();
+    });
+
+    test("marking keep-open leaves inactiveSince untouched", async () => {
+      const { clock, store } = createTestStore();
+      const inactiveSince = clock.now() - HOUR;
+      await store.trackTab(makeTrackedTab({ tabId: 1, inactiveSince }));
+
+      const updated = await store.setKeepOpen(1, true);
+
+      expect(updated.keepOpen).toBe(true);
+      expect(updated.inactiveSince).toBe(inactiveSince);
+    });
+
+    test("unmarking an inactive tab restarts its timer from now", async () => {
+      const { clock, store } = createTestStore();
+      await store.trackTab(makeTrackedTab({ tabId: 1, keepOpen: true, inactiveSince: clock.now() - HOUR }));
+      clock.advance(5_000);
+
+      const updated = await store.setKeepOpen(1, false);
+
+      expect(updated.keepOpen).toBe(false);
+      expect(updated.inactiveSince).toBe(clock.now());
+    });
+
+    test("unmarking a tab with no running timer leaves inactiveSince null", async () => {
+      const { store } = createTestStore();
+      await store.trackTab(makeTrackedTab({ tabId: 1, keepOpen: true, inactiveSince: null }));
+
+      const updated = await store.setKeepOpen(1, false);
+
+      expect(updated.inactiveSince).toBeNull();
+    });
+  });
+
+  describe("recordTabClosed", () => {
+    test("returns null and writes nothing for an unknown tab", async () => {
+      const { storage, store } = createTestStore();
+      const before = storage.peek("trackedTabs");
+
+      const result = await store.recordTabClosed(999);
+
+      expect(result).toBeNull();
+      expect(storage.peek("trackedTabs")).toBe(before);
+      expect(storage.peek("recentlyClosed")).toBeUndefined();
+    });
+
+    test("removes the record and adds a closed entry for an unqueued http(s) tab", async () => {
+      const { clock, store } = createTestStore();
+      const tab = makeTrackedTab({
+        tabId: 1,
+        url: "https://example.com/page",
+        title: "Example",
+        favIconUrl: "https://example.com/f.ico",
+        trackId: "track-1",
+      });
+      await store.trackTab(tab);
+
+      const removed = await store.recordTabClosed(1);
+
+      expect(removed).toEqual(tab);
+      expect(await store.getTrackedTabs()).toEqual([]);
+      expect(await store.getRecentlyClosed()).toEqual([
+        {
+          id: expect.any(String),
+          trackId: "track-1",
+          url: "https://example.com/page",
+          normUrl: "https://example.com/page",
+          title: "Example",
+          favIconUrl: "https://example.com/f.ico",
+          closedAt: clock.now(),
+        },
+      ]);
+    });
+
+    test("adds nothing for a URL matched through normalize() against a queued item", async () => {
+      const { storage, store } = createTestStore();
+      await storage.local.set({ items: [{ normUrl: "https://example.com/page" }] });
+      await store.trackTab(makeTrackedTab({ tabId: 1, url: "https://example.com/page?utm_source=x" }));
+
+      await store.recordTabClosed(1);
+
+      expect(await store.getRecentlyClosed()).toEqual([]);
+    });
+
+    test("adds nothing for a non-http(s) URL", async () => {
+      const { store } = createTestStore();
+      await store.trackTab(makeTrackedTab({ tabId: 1, url: "about:blank" }));
+
+      await store.recordTabClosed(1);
+
+      expect(await store.getRecentlyClosed()).toEqual([]);
+    });
+
+    test("replaces an existing closed entry with the same normalized URL", async () => {
+      const { clock, store } = createTestStore();
+      await store.trackTab(makeTrackedTab({ tabId: 1, url: "https://example.com/page", trackId: "track-1" }));
+      await store.recordTabClosed(1);
+      clock.advance(1_000);
+      await store.trackTab(makeTrackedTab({ tabId: 2, url: "https://example.com/page", trackId: "track-2" }));
+
+      await store.recordTabClosed(2);
+
+      const closed = await store.getRecentlyClosed();
+      expect(closed).toHaveLength(1);
+      expect(closed[0]!.trackId).toBe("track-2");
+      expect(closed[0]!.closedAt).toBe(clock.now());
+    });
+
+    test("writes trackedTabs and recentlyClosed in a single storage.local.set call", async () => {
+      const { storage, store } = createTestStore();
+      await store.trackTab(makeTrackedTab({ tabId: 1, url: "https://example.com/page" }));
+      storage.setCalls = [];
+
+      await store.recordTabClosed(1);
+
+      expect(storage.setCalls).toHaveLength(1);
+      expect(storage.setCalls[0]!.slice().sort()).toEqual(["recentlyClosed", "trackedTabs"]);
+    });
+
+    test("prunes entries past 7 days", async () => {
+      const { clock, store } = createTestStore();
+      await store.trackTab(makeTrackedTab({ tabId: 1, url: "https://example.com/old", trackId: "old" }));
+      await store.recordTabClosed(1);
+      clock.advance(RECENTLY_CLOSED_MAX_AGE + 1);
+      await store.trackTab(makeTrackedTab({ tabId: 2, url: "https://example.com/new", trackId: "new" }));
+
+      await store.recordTabClosed(2);
+
+      const closed = await store.getRecentlyClosed();
+      expect(closed).toHaveLength(1);
+      expect(closed[0]!.trackId).toBe("new");
+    });
+
+    test("prunes past 100 entries, dropping the oldest first", async () => {
+      const { clock, store } = createTestStore();
+      for (let i = 0; i < 100; i++) {
+        await store.trackTab(makeTrackedTab({ tabId: i, url: `https://example.com/${i}`, trackId: `t${i}` }));
+        await store.recordTabClosed(i);
+        clock.advance(1_000);
+      }
+      await store.trackTab(makeTrackedTab({ tabId: 100, url: "https://example.com/100", trackId: "t100" }));
+
+      await store.recordTabClosed(100);
+
+      const closed = await store.getRecentlyClosed();
+      expect(closed).toHaveLength(100);
+      expect(closed.some((entry) => entry.trackId === "t0")).toBe(false);
+      expect(closed.some((entry) => entry.trackId === "t100")).toBe(true);
+    });
+  });
+
+  describe("getRecentlyClosed", () => {
+    test("returns [] when absent and writes nothing", async () => {
+      const { storage, store } = createTestStore();
+      expect(await store.getRecentlyClosed()).toEqual([]);
+      expect(storage.peek("recentlyClosed")).toBeUndefined();
+    });
+  });
+
+  describe("removeClosed", () => {
+    test("removes an entry by id", async () => {
+      const { store } = createTestStore();
+      await store.trackTab(makeTrackedTab({ tabId: 1, url: "https://example.com/page" }));
+      await store.recordTabClosed(1);
+      const [entry] = await store.getRecentlyClosed();
+
+      const removed = await store.removeClosed(entry!.id);
+
+      expect(removed).toEqual(entry);
+      expect(await store.getRecentlyClosed()).toEqual([]);
+    });
+
+    test("returns null and writes nothing for an unknown id", async () => {
+      const { storage, store } = createTestStore();
+      const before = storage.peek("recentlyClosed");
+
+      const result = await store.removeClosed("missing");
+
+      expect(result).toBeNull();
+      expect(storage.peek("recentlyClosed")).toBe(before);
+    });
+  });
+
+  describe("removeClosedByTrackIds", () => {
+    test("removes every entry whose trackId matches", async () => {
+      const { store } = createTestStore();
+      await store.trackTab(makeTrackedTab({ tabId: 1, url: "https://example.com/a", trackId: "t1" }));
+      await store.recordTabClosed(1);
+      await store.trackTab(makeTrackedTab({ tabId: 2, url: "https://example.com/b", trackId: "t2" }));
+      await store.recordTabClosed(2);
+
+      await store.removeClosedByTrackIds(["t1"]);
+
+      const closed = await store.getRecentlyClosed();
+      expect(closed.map((entry) => entry.trackId)).toEqual(["t2"]);
+    });
+
+    test("writes nothing when nothing matches", async () => {
+      const { storage, store } = createTestStore();
+      await store.trackTab(makeTrackedTab({ tabId: 1, url: "https://example.com/a", trackId: "t1" }));
+      await store.recordTabClosed(1);
+      const before = storage.peek("recentlyClosed");
+
+      await store.removeClosedByTrackIds(["missing"]);
+
+      expect(storage.peek("recentlyClosed")).toBe(before);
+    });
+  });
+
+  describe("pruneRecentlyClosed", () => {
+    test("writes nothing when pruneClosed returns the same array", async () => {
+      const { storage, store } = createTestStore();
+      await store.trackTab(makeTrackedTab({ tabId: 1, url: "https://example.com/a" }));
+      await store.recordTabClosed(1);
+      const before = storage.peek("recentlyClosed");
+
+      const pruned = await store.pruneRecentlyClosed();
+
+      expect(pruned).toEqual(before);
+      expect(storage.peek("recentlyClosed")).toBe(before);
+    });
+
+    test("writes the pruned list when something is dropped", async () => {
+      const { clock, store } = createTestStore();
+      await store.trackTab(makeTrackedTab({ tabId: 1, url: "https://example.com/old" }));
+      await store.recordTabClosed(1);
+      clock.advance(RECENTLY_CLOSED_MAX_AGE + 1);
+
+      const pruned = await store.pruneRecentlyClosed();
+
+      expect(pruned).toEqual([]);
+      expect(await store.getRecentlyClosed()).toEqual([]);
+    });
+  });
+
+  describe("autoCloseAfter", () => {
+    test("getAutoCloseAfter defaults to 2 hours when absent", async () => {
+      const { storage, store } = createTestStore();
+      expect(await store.getAutoCloseAfter()).toBe(DEFAULT_AUTO_CLOSE_AFTER);
+      expect(storage.peek("autoCloseAfter")).toBeUndefined();
+    });
+
+    test("setAutoCloseAfter stores a valid value", async () => {
+      const { store } = createTestStore();
+      await store.setAutoCloseAfter(30 * 60 * 1000);
+      expect(await store.getAutoCloseAfter()).toBe(30 * 60 * 1000);
+    });
+
+    test("setAutoCloseAfter rejects an invalid value and writes nothing", async () => {
+      const { storage, store } = createTestStore();
+      const before = storage.peek("autoCloseAfter");
+
+      await expect(store.setAutoCloseAfter(90 * 1000)).rejects.toThrow();
+
+      expect(storage.peek("autoCloseAfter")).toBe(before);
+    });
+  });
+
+  describe("subscribe", () => {
+    test("fires for trackedTabs, recentlyClosed and autoCloseAfter writes, but still not for lastActiveAt", async () => {
+      const { storage, store } = createTestStore();
+      const received: unknown[] = [];
+      store.subscribe((changes) => received.push(changes));
+
+      await storage.local.set({ trackedTabs: [] });
+      await storage.local.set({ recentlyClosed: [] });
+      await storage.local.set({ autoCloseAfter: HOUR });
+      expect(received).toHaveLength(3);
+
+      await storage.local.set({ lastActiveAt: 123 });
+      expect(received).toHaveLength(3);
+    });
   });
 });

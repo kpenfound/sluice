@@ -4,6 +4,8 @@ import { normalize } from "./normalize";
 import { mergePauses, prunePauses as selectPrunablePauses, runningPause, validatePause } from "./pauses";
 import { detectAwayGap } from "./away";
 import type { AwayGap } from "./away";
+import { DEFAULT_AUTO_CLOSE_AFTER, addClosed, isClosable, isQueuedUrl, isValidAutoCloseAfter, pruneClosed } from "./lifecycle";
+import type { ClosedTab, TrackedTab } from "./lifecycle";
 
 /** A changed item in a `storage.onChanged` event, matching `browser.storage.StorageChange`. */
 export interface StorageChange {
@@ -51,6 +53,9 @@ export interface AddPauseInput {
 /** Fields `editPause` may change on an existing pause. */
 export type EditPauseInput = Partial<Pick<Pause, "start" | "end" | "label">>;
 
+/** Fields `updateTrackedTab` may change on a tracked tab. */
+export type UpdateTrackedTabInput = Partial<Pick<TrackedTab, "url" | "title" | "favIconUrl" | "windowId">>;
+
 export interface Store {
   getBuckets(): Promise<Bucket[]>;
   getItems(): Promise<Item[]>;
@@ -77,16 +82,37 @@ export interface Store {
   recordAwayGap(): Promise<AwayGap | null>;
   acceptAwayGap(): Promise<Pause | null>;
   dismissAwayGap(): Promise<void>;
+  getTrackedTabs(): Promise<TrackedTab[]>;
+  replaceTrackedTabs(list: TrackedTab[]): Promise<void>;
+  trackTab(record: TrackedTab): Promise<TrackedTab>;
+  updateTrackedTab(tabId: number, patch: UpdateTrackedTabInput): Promise<TrackedTab | null>;
+  activateTab(tabId: number, windowId: number): Promise<void>;
+  setKeepOpen(tabId: number, keepOpen: boolean): Promise<TrackedTab>;
+  recordTabClosed(tabId: number): Promise<TrackedTab | null>;
+  getRecentlyClosed(): Promise<ClosedTab[]>;
+  removeClosed(id: string): Promise<ClosedTab | null>;
+  removeClosedByTrackIds(trackIds: string[]): Promise<void>;
+  pruneRecentlyClosed(): Promise<ClosedTab[]>;
+  getAutoCloseAfter(): Promise<number>;
+  setAutoCloseAfter(ms: number): Promise<void>;
   subscribe(
     listener: (changes: Record<string, StorageChange>, areaName: string) => void,
   ): () => void;
 }
 
-type StorageKey = "buckets" | "items" | "pauses";
+type StorageKey = "buckets" | "items" | "pauses" | "trackedTabs" | "recentlyClosed";
 type PrefKey = "lastActiveAt" | "lastBucketId";
-type WatchedKey = StorageKey | "awayGap";
+type WatchedKey = StorageKey | "awayGap" | "autoCloseAfter";
 
-const WATCHED_KEYS: WatchedKey[] = ["buckets", "items", "pauses", "awayGap"];
+const WATCHED_KEYS: WatchedKey[] = [
+  "buckets",
+  "items",
+  "pauses",
+  "awayGap",
+  "trackedTabs",
+  "recentlyClosed",
+  "autoCloseAfter",
+];
 
 /**
  * Builds buckets, items and pauses as persisted in `storage.local`, backed by the
@@ -458,6 +484,198 @@ export function createStore(storage: StorageNamespace, options: StoreOptions = {
     });
   }
 
+  /** Reads the tracked tabs, or [] when the key is absent. Makes no write. */
+  function getTrackedTabs(): Promise<TrackedTab[]> {
+    return update<TrackedTab, TrackedTab[]>("trackedTabs", (current) => ({ result: current ?? [] }));
+  }
+
+  /** Replaces the whole tracked-tabs array, for reconciliation (startup restore, install). */
+  function replaceTrackedTabs(list: TrackedTab[]): Promise<void> {
+    return enqueue(async () => {
+      await storage.local.set({ trackedTabs: list });
+    });
+  }
+
+  /** Upserts a tracked tab by `tabId`. */
+  function trackTab(record: TrackedTab): Promise<TrackedTab> {
+    return update<TrackedTab, TrackedTab>("trackedTabs", (current) => {
+      const tabs = current ?? [];
+      const index = tabs.findIndex((tab) => tab.tabId === record.tabId);
+      const next = tabs.slice();
+      if (index === -1) next.push(record);
+      else next[index] = record;
+      return { next, result: record };
+    });
+  }
+
+  /**
+   * Patches a tracked tab's url/title/favIconUrl/windowId. Returns null with no write for an
+   * unknown tab or when the patch changes nothing.
+   */
+  function updateTrackedTab(tabId: number, patch: UpdateTrackedTabInput): Promise<TrackedTab | null> {
+    return update<TrackedTab, TrackedTab | null>("trackedTabs", (current) => {
+      const tabs = current ?? [];
+      const index = tabs.findIndex((tab) => tab.tabId === tabId);
+      const existing = tabs[index];
+      if (existing === undefined) return { result: null };
+
+      const updated: TrackedTab = {
+        ...existing,
+        ...(patch.url !== undefined ? { url: patch.url } : {}),
+        ...(patch.title !== undefined ? { title: patch.title } : {}),
+        ...(patch.favIconUrl !== undefined ? { favIconUrl: patch.favIconUrl } : {}),
+        ...(patch.windowId !== undefined ? { windowId: patch.windowId } : {}),
+      };
+      if (
+        updated.url === existing.url &&
+        updated.title === existing.title &&
+        updated.favIconUrl === existing.favIconUrl &&
+        updated.windowId === existing.windowId
+      ) {
+        return { result: null };
+      }
+
+      const next = tabs.slice();
+      next[index] = updated;
+      return { next, result: updated };
+    });
+  }
+
+  /**
+   * Marks `tabId` active: its own `inactiveSince` becomes null, and every other record in the
+   * same `windowId` whose `inactiveSince` is null (the previously active tab) starts its timer.
+   */
+  function activateTab(tabId: number, windowId: number): Promise<void> {
+    return update<TrackedTab, void>("trackedTabs", (current) => {
+      const tabs = current ?? [];
+      const whenNow = now();
+      const next = tabs.map((tab) => {
+        if (tab.tabId === tabId) {
+          return tab.inactiveSince === null ? tab : { ...tab, inactiveSince: null };
+        }
+        if (tab.windowId === windowId && tab.inactiveSince === null) {
+          return { ...tab, inactiveSince: whenNow };
+        }
+        return tab;
+      });
+      return { next, result: undefined };
+    });
+  }
+
+  /**
+   * Sets a tracked tab's keep-open flag. Rejects an unknown tab. Unmarking (`keepOpen: false`) a
+   * tab whose `inactiveSince` is non-null resets it to now, restarting its timer.
+   */
+  function setKeepOpen(tabId: number, keepOpen: boolean): Promise<TrackedTab> {
+    return update<TrackedTab, TrackedTab>("trackedTabs", (current) => {
+      const tabs = current ?? [];
+      const index = tabs.findIndex((tab) => tab.tabId === tabId);
+      const existing = tabs[index];
+      if (existing === undefined) throw new Error(`Unknown tab: ${tabId}`);
+      const inactiveSince = !keepOpen && existing.inactiveSince !== null ? now() : existing.inactiveSince;
+      const updated: TrackedTab = { ...existing, keepOpen, inactiveSince };
+      const next = tabs.slice();
+      next[index] = updated;
+      return { next, result: updated };
+    });
+  }
+
+  /**
+   * Removes a tab's tracking record. When its URL is closable and not queued, also adds a
+   * "Recently closed" entry, writing both keys in one `storage.local.set` call. Returns the
+   * removed record, or null with no write when the tab is unknown.
+   */
+  function recordTabClosed(tabId: number): Promise<TrackedTab | null> {
+    return enqueue(async () => {
+      const stored = await storage.local.get(["trackedTabs", "items", "recentlyClosed"]);
+      const tracked = (stored.trackedTabs as TrackedTab[] | undefined) ?? [];
+      const index = tracked.findIndex((tab) => tab.tabId === tabId);
+      const existing = tracked[index];
+      if (existing === undefined) return null;
+
+      const nextTracked = tracked.slice();
+      nextTracked.splice(index, 1);
+
+      const items = (stored.items as Item[] | undefined) ?? [];
+      const recentlyClosed = (stored.recentlyClosed as ClosedTab[] | undefined) ?? [];
+      const whenNow = now();
+      let nextClosed = recentlyClosed;
+      if (isClosable(existing.url) && !isQueuedUrl(existing.url, items)) {
+        const entry: ClosedTab = {
+          id: newId(),
+          trackId: existing.trackId,
+          url: existing.url,
+          normUrl: normalize(existing.url),
+          title: existing.title,
+          ...(existing.favIconUrl !== undefined ? { favIconUrl: existing.favIconUrl } : {}),
+          closedAt: whenNow,
+        };
+        nextClosed = addClosed(recentlyClosed, entry, whenNow);
+      }
+
+      await storage.local.set({ trackedTabs: nextTracked, recentlyClosed: nextClosed });
+      return existing;
+    });
+  }
+
+  /** Reads "Recently closed", or [] when the key is absent. Makes no write. */
+  function getRecentlyClosed(): Promise<ClosedTab[]> {
+    return update<ClosedTab, ClosedTab[]>("recentlyClosed", (current) => ({ result: current ?? [] }));
+  }
+
+  /** Removes a "Recently closed" entry by id. Returns null with no write for an unknown id. */
+  function removeClosed(id: string): Promise<ClosedTab | null> {
+    return update<ClosedTab, ClosedTab | null>("recentlyClosed", (current) => {
+      const list = current ?? [];
+      const index = list.findIndex((entry) => entry.id === id);
+      const existing = list[index];
+      if (existing === undefined) return { result: null };
+      const next = list.slice();
+      next.splice(index, 1);
+      return { next, result: existing };
+    });
+  }
+
+  /** Removes every "Recently closed" entry whose trackId is in `trackIds`. No write when none match. */
+  function removeClosedByTrackIds(trackIds: string[]): Promise<void> {
+    return update<ClosedTab, void>("recentlyClosed", (current) => {
+      const list = current ?? [];
+      const ids = new Set(trackIds);
+      const next = list.filter((entry) => !ids.has(entry.trackId));
+      if (next.length === list.length) return { result: undefined };
+      return { next, result: undefined };
+    });
+  }
+
+  /** Prunes "Recently closed" by age and count. Makes no write when nothing is pruned. */
+  function pruneRecentlyClosed(): Promise<ClosedTab[]> {
+    return enqueue(async () => {
+      const stored = await storage.local.get("recentlyClosed");
+      const list = (stored.recentlyClosed as ClosedTab[] | undefined) ?? [];
+      const pruned = pruneClosed(list, now());
+      if (pruned !== list) await storage.local.set({ recentlyClosed: pruned });
+      return pruned;
+    });
+  }
+
+  /** Reads the auto-close timeout, defaulting to `DEFAULT_AUTO_CLOSE_AFTER` when absent. */
+  function getAutoCloseAfter(): Promise<number> {
+    return enqueue(async () => {
+      const stored = await storage.local.get("autoCloseAfter");
+      return (stored.autoCloseAfter as number | undefined) ?? DEFAULT_AUTO_CLOSE_AFTER;
+    });
+  }
+
+  /** Sets the auto-close timeout. Rejects with no write when `isValidAutoCloseAfter` fails. */
+  function setAutoCloseAfter(ms: number): Promise<void> {
+    if (!isValidAutoCloseAfter(ms)) {
+      return Promise.reject(new Error(`Invalid auto-close timeout: ${ms}`));
+    }
+    return enqueue(async () => {
+      await storage.local.set({ autoCloseAfter: ms });
+    });
+  }
+
   function subscribe(
     listener: (changes: Record<string, StorageChange>, areaName: string) => void,
   ): () => void {
@@ -496,6 +714,19 @@ export function createStore(storage: StorageNamespace, options: StoreOptions = {
     recordAwayGap,
     acceptAwayGap,
     dismissAwayGap,
+    getTrackedTabs,
+    replaceTrackedTabs,
+    trackTab,
+    updateTrackedTab,
+    activateTab,
+    setKeepOpen,
+    recordTabClosed,
+    getRecentlyClosed,
+    removeClosed,
+    removeClosedByTrackIds,
+    pruneRecentlyClosed,
+    getAutoCloseAfter,
+    setAutoCloseAfter,
     subscribe,
   };
 }

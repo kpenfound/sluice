@@ -14,6 +14,9 @@ import {
 import type { TabEventDeps } from "./tabevents";
 import { closeExpired, reconcileTabs, syncSessionValues } from "./tabsync";
 import type { TabSyncDeps } from "./tabsync";
+import { handleWashCommand, runWash } from "./wash";
+import type { WashDeps } from "./wash";
+import { WASH_COMMAND, WASH_PAGE, isWashMessage } from "../lib/wash";
 
 const ALARM_NAME = "sluice-tick";
 const LAUNCHER_PAGE = "newtab.html";
@@ -35,12 +38,17 @@ export interface BackgroundApi {
   runtime: {
     onInstalled: typeof browser.runtime.onInstalled;
     onStartup: typeof browser.runtime.onStartup;
+    onMessage: typeof browser.runtime.onMessage;
     getURL: typeof browser.runtime.getURL;
   };
   tabs: {
     create: typeof browser.tabs.create;
     query: typeof browser.tabs.query;
     remove: typeof browser.tabs.remove;
+    update(
+      tabId: number,
+      updateProperties: browser.tabs._UpdateUpdateProperties,
+    ): Promise<browser.tabs.Tab>;
     onCreated: typeof browser.tabs.onCreated;
     onActivated: typeof browser.tabs.onActivated;
     onUpdated: typeof browser.tabs.onUpdated;
@@ -100,6 +108,10 @@ export function start(api: BackgroundApi): void {
   const tabEventDeps: TabEventDeps = { store, sessions: api.sessions, newId, now };
   const tabSyncDeps: TabSyncDeps = { store, tabs: api.tabs, sessions: api.sessions, newId, now };
 
+  const launcherUrl = api.runtime.getURL(LAUNCHER_PAGE);
+  const washUrl = api.runtime.getURL(WASH_PAGE);
+  const washDeps: WashDeps = { store, tabs: api.tabs, launcherUrl, washUrl };
+
   let previousTrackedTabs: TrackedTab[] = [];
 
   api.alarms.onAlarm.addListener((alarm) => {
@@ -111,8 +123,19 @@ export function start(api: BackgroundApi): void {
   });
 
   api.commands.onCommand.addListener((command) => {
-    if (command !== "open-launcher") return;
-    void api.tabs.create({ url: api.runtime.getURL(LAUNCHER_PAGE) });
+    if (command === "open-launcher") {
+      void api.tabs.create({ url: launcherUrl });
+      return;
+    }
+    if (command === WASH_COMMAND) {
+      void handleWashCommand(washDeps);
+      return;
+    }
+  });
+
+  api.runtime.onMessage.addListener((message, sender) => {
+    if (!isWashMessage(message)) return undefined;
+    return runWash(washDeps, { keptTabId: sender.tab?.id });
   });
 
   api.tabs.onCreated.addListener((tab) => {

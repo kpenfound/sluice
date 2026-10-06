@@ -4,6 +4,7 @@ import type { BackgroundApi } from "./main";
 import { createStore } from "../lib/store";
 import type { StorageChange, StorageNamespace } from "../lib/store";
 import { HOUR } from "../lib/model";
+import { WASH_COMMAND, WASH_MESSAGE_TYPE } from "../lib/wash";
 
 type Listener = (changes: Record<string, StorageChange>, areaName: string) => void;
 
@@ -104,6 +105,7 @@ class FakeTabs {
   tabs: browser.tabs.Tab[] = [];
   createdTabs: Array<browser.tabs._CreateCreateProperties> = [];
   removed: number[][] = [];
+  updated: Array<{ tabId: number; props: browser.tabs._UpdateUpdateProperties }> = [];
 
   onCreated = new FakeEvent<(tab: browser.tabs.Tab) => void>();
   onActivated = new FakeEvent<(activeInfo: browser.tabs._OnActivatedActiveInfo) => void>();
@@ -115,8 +117,8 @@ class FakeTabs {
 
   create = (createProperties: browser.tabs._CreateCreateProperties): Promise<browser.tabs.Tab> => {
     this.createdTabs.push(createProperties);
-    return Promise.resolve({
-      id: this.createdTabs.length,
+    const tab = {
+      id: this.createdTabs.length + 1000,
       index: 0,
       windowId: 1,
       highlighted: false,
@@ -124,11 +126,26 @@ class FakeTabs {
       pinned: false,
       incognito: false,
       url: createProperties.url,
-    } as browser.tabs.Tab);
+    } as browser.tabs.Tab;
+    this.tabs.push(tab);
+    return Promise.resolve(tab);
   };
 
   query = (_queryInfo: browser.tabs._QueryQueryInfo): Promise<browser.tabs.Tab[]> =>
     Promise.resolve(this.tabs.slice());
+
+  update = (
+    tabId: number,
+    updateProperties: browser.tabs._UpdateUpdateProperties,
+  ): Promise<browser.tabs.Tab> => {
+    this.updated.push({ tabId, props: updateProperties });
+    const tab = this.tabs.find((t) => t.id === tabId);
+    if (tab) {
+      if (updateProperties.url !== undefined) tab.url = updateProperties.url;
+      if (updateProperties.active !== undefined) tab.active = updateProperties.active;
+    }
+    return Promise.resolve(tab ?? makeTab({ id: tabId }));
+  };
 
   remove = (tabIds: number | number[]): Promise<void> => {
     const ids = Array.isArray(tabIds) ? tabIds : [tabIds];
@@ -182,6 +199,13 @@ function makeApi(storage: StorageNamespace, alarms: FakeAlarms) {
   const onInstalled = new FakeEvent<(details: browser.runtime._OnInstalledDetails) => void>();
   const onStartup = new FakeEvent<() => void>();
   const onCommand = new FakeEvent<(command: string, tab: browser.tabs.Tab) => void>();
+  const onMessage = new FakeEvent<
+    (
+      message: unknown,
+      sender: browser.runtime.MessageSender,
+      sendResponse: (response?: unknown) => void,
+    ) => boolean | Promise<unknown> | void
+  >();
   const badgeTexts: Array<string | null> = [];
   const tabs = new FakeTabs();
   const sessions = new FakeSessions();
@@ -198,12 +222,14 @@ function makeApi(storage: StorageNamespace, alarms: FakeAlarms) {
     runtime: {
       onInstalled,
       onStartup,
+      onMessage,
       getURL: (path) => `moz-extension://fake-id/${path}`,
     },
     tabs: {
       create: tabs.create,
       query: tabs.query,
       remove: tabs.remove,
+      update: tabs.update,
       onCreated: tabs.onCreated,
       onActivated: tabs.onActivated,
       onUpdated: tabs.onUpdated,
@@ -228,6 +254,7 @@ function makeApi(storage: StorageNamespace, alarms: FakeAlarms) {
     onInstalled,
     onStartup,
     onCommand,
+    onMessage,
     badgeTexts,
     createdTabs: tabs.createdTabs,
     tabs,
@@ -239,7 +266,10 @@ describe("start", () => {
   test("registers every listener synchronously, before any awaited work", () => {
     const storage = new FakeStorage();
     const alarms = new FakeAlarms();
-    const { api, onVisited, onInstalled, onStartup, onCommand, tabs } = makeApi(storage, alarms);
+    const { api, onVisited, onInstalled, onStartup, onCommand, onMessage, tabs } = makeApi(
+      storage,
+      alarms,
+    );
 
     start(api);
 
@@ -248,6 +278,7 @@ describe("start", () => {
     expect(onInstalled.count).toBe(1);
     expect(onStartup.count).toBe(1);
     expect(onCommand.count).toBe(1);
+    expect(onMessage.count).toBe(1);
     expect(tabs.onCreated.count).toBe(1);
     expect(tabs.onActivated.count).toBe(1);
     expect(tabs.onUpdated.count).toBe(1);
@@ -525,6 +556,127 @@ describe("start", () => {
     await flush();
 
     expect(createdTabs).toEqual([]);
+  });
+
+  test("firing the wash command with no triage tab open opens the triage URL and closes nothing", async () => {
+    const storage = new FakeStorage();
+    const alarms = new FakeAlarms();
+    const { api, onCommand, createdTabs, tabs } = makeApi(storage, alarms);
+    tabs.tabs = [makeTab({ id: 1, url: "https://example.com/" })];
+
+    start(api);
+    onCommand.fire(WASH_COMMAND, {} as browser.tabs.Tab);
+    await flush();
+
+    expect(createdTabs).toEqual([{ url: "moz-extension://fake-id/newtab.html?wash=1" }]);
+    expect(tabs.removed).toEqual([]);
+  });
+
+  test("firing the wash command with a triage tab open washes and keeps that tab", async () => {
+    const storage = new FakeStorage();
+    const alarms = new FakeAlarms();
+    const { api, onCommand, tabs } = makeApi(storage, alarms);
+    tabs.tabs = [
+      makeTab({ id: 1, url: "moz-extension://fake-id/newtab.html?wash=1" }),
+      makeTab({ id: 2, url: "https://example.com/open" }),
+    ];
+
+    start(api);
+    onCommand.fire(WASH_COMMAND, {} as browser.tabs.Tab);
+    await flush();
+
+    expect(tabs.removed).toEqual([[2]]);
+    expect(tabs.updated).toEqual([
+      { tabId: 1, props: { url: "moz-extension://fake-id/newtab.html", active: true } },
+    ]);
+  });
+
+  test("a wash message from a tab washes and keeps the sender tab", async () => {
+    const storage = new FakeStorage();
+    const alarms = new FakeAlarms();
+    const { api, onMessage, tabs } = makeApi(storage, alarms);
+    tabs.tabs = [
+      makeTab({ id: 5, url: "https://example.com/triage" }),
+      makeTab({ id: 6, url: "https://example.com/other" }),
+    ];
+
+    start(api);
+    onMessage.fire(
+      { type: WASH_MESSAGE_TYPE },
+      { tab: makeTab({ id: 5 }) } as browser.runtime.MessageSender,
+      () => {},
+    );
+    await flush();
+
+    expect(tabs.removed).toEqual([[6]]);
+    expect(tabs.updated).toEqual([
+      { tabId: 5, props: { url: "moz-extension://fake-id/newtab.html", active: true } },
+    ]);
+  });
+
+  test("a non-wash message is ignored", async () => {
+    const storage = new FakeStorage();
+    const alarms = new FakeAlarms();
+    const { api, onMessage, tabs } = makeApi(storage, alarms);
+    tabs.tabs = [makeTab({ id: 1, url: "https://example.com/" })];
+
+    start(api);
+    onMessage.fire({ type: "something-else" }, {} as browser.runtime.MessageSender, () => {});
+    await flush();
+
+    expect(tabs.removed).toEqual([]);
+    expect(tabs.updated).toEqual([]);
+  });
+
+  test("after a wash, an unqueued closed tab gets a recently closed entry but a tab queued beforehand does not", async () => {
+    const storage = new FakeStorage();
+    const alarms = new FakeAlarms();
+    const { api, onCommand, tabs } = makeApi(storage, alarms);
+
+    const otherStore = createStore(storage);
+    const [bucket] = await otherStore.getBuckets();
+    await otherStore.addItem({
+      url: "https://example.com/queued",
+      title: "Queued",
+      bucketId: bucket!.id,
+      riffle: "72h",
+    });
+    await otherStore.replaceTrackedTabs([
+      {
+        tabId: 2,
+        windowId: 1,
+        trackId: "queued-tab",
+        url: "https://example.com/queued",
+        title: "Queued",
+        keepOpen: false,
+        inactiveSince: null,
+      },
+      {
+        tabId: 3,
+        windowId: 1,
+        trackId: "unqueued-tab",
+        url: "https://example.com/unqueued",
+        title: "Unqueued",
+        keepOpen: false,
+        inactiveSince: null,
+      },
+    ]);
+
+    tabs.tabs = [
+      makeTab({ id: 1, url: "moz-extension://fake-id/newtab.html?wash=1" }),
+      makeTab({ id: 2, url: "https://example.com/queued" }),
+      makeTab({ id: 3, url: "https://example.com/unqueued" }),
+    ];
+
+    start(api);
+    onCommand.fire(WASH_COMMAND, {} as browser.tabs.Tab);
+    await flush();
+
+    expect(tabs.removed).toEqual([[2, 3]]);
+
+    const closed = storage.peek("recentlyClosed") as Array<{ url: string }>;
+    expect(closed.some((entry) => entry.url === "https://example.com/unqueued")).toBe(true);
+    expect(closed.some((entry) => entry.url === "https://example.com/queued")).toBe(false);
   });
 
   test("tabs.onCreated tracks a tab, onActivated moves the running timer, and onRemoved adds it to recently closed", async () => {

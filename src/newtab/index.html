@@ -44,6 +44,20 @@
         border: 1px solid #ccc;
         border-radius: 4px;
       }
+      .banner {
+        display: flex;
+        align-items: center;
+        flex-wrap: wrap;
+        gap: 0.6rem;
+        margin-bottom: 1rem;
+        padding: 0.6rem 0.8rem;
+        border-radius: 4px;
+        border: 1px solid #c9c0a0;
+        background: #fff6dc;
+      }
+      .banner span {
+        flex: 1 1 auto;
+      }
       .columns {
         display: flex;
         gap: 1rem;
@@ -113,6 +127,11 @@
       }
       .item-title:hover {
         text-decoration: underline;
+      }
+      .item-title.disabled {
+        pointer-events: none;
+        opacity: 0.5;
+        cursor: default;
       }
       .item-bucket,
       .item-domain,

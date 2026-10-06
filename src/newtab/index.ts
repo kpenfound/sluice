@@ -7,10 +7,20 @@ import type { Bucket, Item, Pause, RiffleId } from "../lib/model";
 import { RIFFLES } from "../lib/model";
 import { createStore } from "../lib/store";
 import { dueLabel, formatDuration, launcherView } from "./model";
-import type { Column, ItemView, LauncherView } from "./model";
+import type { AwayGapBanner, Column, ItemView, LauncherView, PauseBanner } from "./model";
 
 const store = createStore(browser.storage);
 const app = document.getElementById("app")!;
+
+// The most recently rendered view, so event handlers can check whether actions are currently
+// allowed at call time rather than trusting a closure captured when their control was drawn.
+// This is also the accessor newtab-ui-keyboard consults before acting on a key.
+let currentView: LauncherView | null = null;
+
+/** Whether item actions are currently allowed, per the most recent render. False before the first render. */
+export function actionsEnabled(): boolean {
+  return currentView?.actionsEnabled ?? false;
+}
 
 interface PageState {
   buckets: Bucket[];
@@ -75,7 +85,7 @@ async function runAction(fn: () => Promise<unknown>): Promise<void> {
 
 /** Records the visit, then loads the item's URL in this tab. A rejected recordVisit shows inline instead of navigating. */
 async function openItem(item: ItemView): Promise<void> {
-  if (state === null) return;
+  if (state === null || !actionsEnabled()) return;
   state.message = null;
   try {
     await store.recordVisit(item.url);
@@ -116,9 +126,10 @@ function renderItemCard(item: ItemView, riffle: RiffleId, view: LauncherView, se
   header.append(renderFavicon(item.favIconUrl));
 
   const titleLink = document.createElement("a");
-  titleLink.className = "item-title";
+  titleLink.className = view.actionsEnabled ? "item-title" : "item-title disabled";
   titleLink.href = item.url;
   titleLink.textContent = item.title;
+  titleLink.setAttribute("aria-disabled", view.actionsEnabled ? "false" : "true");
   titleLink.addEventListener("click", (event) => {
     event.preventDefault();
     void openItem(item);
@@ -157,17 +168,23 @@ function renderItemCard(item: ItemView, riffle: RiffleId, view: LauncherView, se
   const openButton = document.createElement("button");
   openButton.type = "button";
   openButton.textContent = "Open";
+  openButton.disabled = !view.actionsEnabled;
   openButton.addEventListener("click", () => void openItem(item));
   actions.append(openButton);
 
   const deferButton = document.createElement("button");
   deferButton.type = "button";
   deferButton.textContent = "Defer";
-  deferButton.addEventListener("click", () => void runAction(() => store.deferItem(item.id)));
+  deferButton.disabled = !view.actionsEnabled;
+  deferButton.addEventListener("click", () => {
+    if (!actionsEnabled()) return;
+    void runAction(() => store.deferItem(item.id));
+  });
   actions.append(deferButton);
 
   const moveSelect = document.createElement("select");
   moveSelect.setAttribute("aria-label", `Move ${item.title}`);
+  moveSelect.disabled = !view.actionsEnabled;
   for (const option of RIFFLES) {
     const optionEl = document.createElement("option");
     optionEl.value = option;
@@ -176,12 +193,14 @@ function renderItemCard(item: ItemView, riffle: RiffleId, view: LauncherView, se
   }
   moveSelect.value = riffle;
   moveSelect.addEventListener("change", () => {
+    if (!actionsEnabled()) return;
     void runAction(() => store.moveItem(item.id, moveSelect.value as RiffleId));
   });
   actions.append(moveSelect);
 
   const bucketSelect = document.createElement("select");
   bucketSelect.setAttribute("aria-label", `Change bucket for ${item.title}`);
+  bucketSelect.disabled = !view.actionsEnabled;
   for (const bucket of view.buckets) {
     const optionEl = document.createElement("option");
     optionEl.value = bucket.id;
@@ -190,6 +209,7 @@ function renderItemCard(item: ItemView, riffle: RiffleId, view: LauncherView, se
   }
   bucketSelect.value = bucketIdForItem(item, view, searching);
   bucketSelect.addEventListener("change", () => {
+    if (!actionsEnabled()) return;
     void runAction(() => store.changeBucket(item.id, bucketSelect.value));
   });
   actions.append(bucketSelect);
@@ -197,7 +217,11 @@ function renderItemCard(item: ItemView, riffle: RiffleId, view: LauncherView, se
   const resolveButton = document.createElement("button");
   resolveButton.type = "button";
   resolveButton.textContent = "Resolve";
-  resolveButton.addEventListener("click", () => void runAction(() => store.resolveItem(item.id)));
+  resolveButton.disabled = !view.actionsEnabled;
+  resolveButton.addEventListener("click", () => {
+    if (!actionsEnabled()) return;
+    void runAction(() => store.resolveItem(item.id));
+  });
   actions.append(resolveButton);
 
   card.append(actions);
@@ -278,10 +302,47 @@ function renderSearch(): HTMLInputElement {
   return input;
 }
 
+function renderPauseBanner(banner: PauseBanner): HTMLElement {
+  const div = document.createElement("div");
+  div.className = "banner pause-banner";
+  const text = document.createElement("span");
+  text.textContent = `Paused since ${new Date(banner.start).toLocaleString()}`;
+  div.append(text);
+  const resumeButton = document.createElement("button");
+  resumeButton.type = "button";
+  resumeButton.textContent = "Resume";
+  resumeButton.addEventListener("click", () => void runAction(() => store.resume()));
+  div.append(resumeButton);
+  return div;
+}
+
+function renderAwayGapBanner(banner: AwayGapBanner): HTMLElement {
+  const div = document.createElement("div");
+  div.className = "banner away-gap-banner";
+  const text = document.createElement("span");
+  const itemWord = banner.freed === 1 ? "item" : "items";
+  text.textContent =
+    `Firefox was closed from ${new Date(banner.start).toLocaleString()} to ` +
+    `${new Date(banner.end).toLocaleString()} · pausing this gap would free ${banner.freed} ${itemWord}`;
+  div.append(text);
+  const acceptButton = document.createElement("button");
+  acceptButton.type = "button";
+  acceptButton.textContent = "Pause this gap";
+  acceptButton.addEventListener("click", () => void runAction(() => store.acceptAwayGap()));
+  div.append(acceptButton);
+  const dismissButton = document.createElement("button");
+  dismissButton.type = "button";
+  dismissButton.textContent = "Dismiss";
+  dismissButton.addEventListener("click", () => void runAction(() => store.dismissAwayGap()));
+  div.append(dismissButton);
+  return div;
+}
+
 function render(): void {
   app.replaceChildren();
 
   if (state === null) {
+    currentView = null;
     const loading = document.createElement("p");
     loading.className = "loading";
     loading.textContent = "Loading…";
@@ -298,6 +359,7 @@ function render(): void {
     query: state.query,
     now: Date.now(),
   });
+  currentView = view;
   const searching = view.staleExpanded;
 
   if (state.message !== null) {
@@ -316,6 +378,9 @@ function render(): void {
     const pos = searchInput.value.length;
     searchInput.setSelectionRange(pos, pos);
   }
+
+  if (view.pauseBanner !== null) app.append(renderPauseBanner(view.pauseBanner));
+  if (view.awayGapBanner !== null) app.append(renderAwayGapBanner(view.awayGapBanner));
 
   const columns = document.createElement("div");
   columns.className = "columns";

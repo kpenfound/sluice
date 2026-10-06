@@ -241,13 +241,13 @@ Firefox asks me to confirm the new tab override the first time. Only one extensi
 
 ### Wash
 
-A hotkey closes every tab in the current window.
+A hotkey closes every tab in every normal window via a triage view. Private windows are untouched.
 
 1. Sluice opens a triage view on the new tab page. It lists the open tabs that aren't queued yet, with quick bucket and riffle buttons for each one.
 2. I file what I want to keep, then confirm.
-3. Sluice closes every tab and leaves one Sluice new tab open, since Firefox needs at least one tab in a window.
+3. Sluice closes every tab in every normal window, except tabs playing audio and tabs marked never to auto-close, and leaves one Sluice new tab open, since Firefox needs at least one tab in a window.
 
-The triage step is skippable with a second press of the hotkey or a "wash now" button.
+The triage step is skippable with a second press of the hotkey or a "Wash now" button.
 
 Proposed for later: auto-wash after the `idle` API reports N minutes idle. Skip triage in that mode and only close tabs.
 
@@ -256,7 +256,7 @@ Proposed for later: auto-wash after the `idle` API reports N minutes idle. Skip 
 |Command|Default|
 |---|---|
 |Add current tab|`_execute_action`, which opens the popup|
-|Wash|TBD|
+|Wash|none; bound in Firefox's shortcut settings, like Open launcher|
 |Open launcher|TBD|
 
 Users can rebind these in Firefox's extension shortcuts settings.
@@ -312,7 +312,7 @@ Sluice ships with three default buckets: Dagger, Side projects, Personal. A basi
 ## Open questions
 
 1. Should wash skip tabs playing audio or tabs with unsaved form input?
-	1. answer: yes
+	1. answer: wash skips tabs playing audio. The unsaved-form-input exemption was dropped (workstream 5) so that wash needs no page-content permission.
 2. Should wash act on the current window or all windows?
 	1. answer: all windows
 3. Should private windows count? `history.onVisited` doesn't fire there, so revisits in private windows won't register either way.

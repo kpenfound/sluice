@@ -8,7 +8,13 @@ describe("manifest", () => {
   });
 
   test("requests only the permissions the design lists", () => {
-    expect([...manifest.permissions].sort()).toEqual(["alarms", "history", "storage", "tabs"]);
+    expect([...manifest.permissions].sort()).toEqual([
+      "alarms",
+      "history",
+      "sessions",
+      "storage",
+      "tabs",
+    ]);
   });
 
   test("owns the new tab page and the toolbar popup", () => {

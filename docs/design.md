@@ -280,6 +280,7 @@ Users can rebind these in Firefox's extension shortcuts settings.
 |`history`|`onVisited` for revisit matching|
 |`storage`|Buckets and items|
 |`alarms`|Periodic badge updates|
+|`sessions`|Carry tab tracking state (keep-open flag, tracking id) across restarts via tab values|
 |`idle`|Only if auto-wash ships|
 
 ### Stack

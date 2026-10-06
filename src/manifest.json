@@ -12,7 +12,7 @@
       }
     }
   },
-  "permissions": ["tabs", "history", "storage", "alarms"],
+  "permissions": ["alarms", "history", "sessions", "storage", "tabs"],
   "commands": {
     "_execute_action": {
       "suggested_key": {

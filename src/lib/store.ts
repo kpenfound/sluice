@@ -2,6 +2,8 @@ import { DEFAULT_BUCKET_NAMES, isRiffleId, nextRiffle } from "./model";
 import type { Bucket, Item, Pause, RiffleId } from "./model";
 import { normalize } from "./normalize";
 import { mergePauses, prunePauses as selectPrunablePauses, runningPause, validatePause } from "./pauses";
+import { detectAwayGap } from "./away";
+import type { AwayGap } from "./away";
 
 /** A changed item in a `storage.onChanged` event, matching `browser.storage.StorageChange`. */
 export interface StorageChange {
@@ -71,6 +73,10 @@ export interface Store {
   touchActive(): Promise<number>;
   getLastBucketId(): Promise<string | null>;
   setLastBucketId(id: string): Promise<void>;
+  getAwayGap(): Promise<AwayGap | null>;
+  recordAwayGap(): Promise<AwayGap | null>;
+  acceptAwayGap(): Promise<Pause | null>;
+  dismissAwayGap(): Promise<void>;
   subscribe(
     listener: (changes: Record<string, StorageChange>, areaName: string) => void,
   ): () => void;
@@ -78,8 +84,9 @@ export interface Store {
 
 type StorageKey = "buckets" | "items" | "pauses";
 type PrefKey = "lastActiveAt" | "lastBucketId";
+type WatchedKey = StorageKey | "awayGap";
 
-const WATCHED_KEYS: StorageKey[] = ["buckets", "items", "pauses"];
+const WATCHED_KEYS: WatchedKey[] = ["buckets", "items", "pauses", "awayGap"];
 
 /**
  * Builds buckets, items and pauses as persisted in `storage.local`, backed by the
@@ -405,6 +412,52 @@ export function createStore(storage: StorageNamespace, options: StoreOptions = {
     });
   }
 
+  /** Reads the pending away-gap offer, or null when absent or null. Makes no write. */
+  function getAwayGap(): Promise<AwayGap | null> {
+    return enqueue(async () => {
+      const stored = await storage.local.get("awayGap");
+      return (stored.awayGap as AwayGap | null | undefined) ?? null;
+    });
+  }
+
+  /**
+   * Reads `lastActiveAt` and `pauses` and runs `detectAwayGap` against the given `now`. Writes
+   * `awayGap` only when a gap is found, replacing any older pending one. Never writes `lastActiveAt`.
+   */
+  function recordAwayGap(): Promise<AwayGap | null> {
+    return enqueue(async () => {
+      const stored = await storage.local.get(["lastActiveAt", "pauses"]);
+      const lastActiveAt = (stored.lastActiveAt as number | undefined) ?? null;
+      const pauses = (stored.pauses as Pause[] | undefined) ?? [];
+      const gap = detectAwayGap(lastActiveAt, now(), pauses);
+      if (gap !== null) await storage.local.set({ awayGap: gap });
+      return gap;
+    });
+  }
+
+  /**
+   * With a pending gap, adds it as a pause through the same validate/merge-on-write path `addPause`
+   * uses, clears `awayGap`, and returns the merged pause. With nothing pending, makes no write.
+   */
+  function acceptAwayGap(): Promise<Pause | null> {
+    return enqueue(async () => {
+      const stored = await storage.local.get(["awayGap", "pauses"]);
+      const gap = (stored.awayGap as AwayGap | null | undefined) ?? null;
+      if (gap === null) return null;
+      const pauses = (stored.pauses as Pause[] | undefined) ?? [];
+      const { next, result } = mergeWrite(pauses, { id: newId(), start: gap.start, end: gap.end });
+      await storage.local.set({ pauses: next, awayGap: null });
+      return result;
+    });
+  }
+
+  /** Clears the pending away-gap offer. */
+  function dismissAwayGap(): Promise<void> {
+    return enqueue(async () => {
+      await storage.local.set({ awayGap: null });
+    });
+  }
+
   function subscribe(
     listener: (changes: Record<string, StorageChange>, areaName: string) => void,
   ): () => void {
@@ -439,6 +492,10 @@ export function createStore(storage: StorageNamespace, options: StoreOptions = {
     touchActive,
     getLastBucketId: () => getPref<string>("lastBucketId"),
     setLastBucketId,
+    getAwayGap,
+    recordAwayGap,
+    acceptAwayGap,
+    dismissAwayGap,
     subscribe,
   };
 }

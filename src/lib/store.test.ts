@@ -4,6 +4,7 @@ import type { StorageChange, StorageNamespace } from "./store";
 import type { Item } from "./model";
 import { HOUR } from "./model";
 import { isOverdue } from "./due";
+import { AWAY_GAP_THRESHOLD } from "./away";
 
 type Listener = (changes: Record<string, StorageChange>, areaName: string) => void;
 
@@ -909,5 +910,129 @@ describe("concurrent pause writes", () => {
     const pauses = await store.getPauses();
     expect(pauses).toHaveLength(2);
     expect(pauses.map((p) => p.id).sort()).toEqual([a.id, b.id].sort());
+  });
+});
+
+describe("awayGap", () => {
+  test("getAwayGap returns null when absent and writes nothing", async () => {
+    const { storage, store } = createTestStore();
+    expect(await store.getAwayGap()).toBeNull();
+    expect(storage.peek("awayGap")).toBeUndefined();
+  });
+
+  test("recordAwayGap finds a gap for an old lastActiveAt and writes it", async () => {
+    const { storage, clock, store } = createTestStore();
+    const lastActiveAt = clock.now() - AWAY_GAP_THRESHOLD - HOUR;
+    await storage.local.set({ lastActiveAt });
+
+    const gap = await store.recordAwayGap();
+
+    expect(gap).toEqual({ start: lastActiveAt, end: clock.now() });
+    expect(await store.getAwayGap()).toEqual(gap);
+  });
+
+  test("recordAwayGap returns null and writes nothing for a recent lastActiveAt", async () => {
+    const { storage, clock, store } = createTestStore();
+    await storage.local.set({ lastActiveAt: clock.now() - HOUR });
+    const before = storage.peek("awayGap");
+
+    const gap = await store.recordAwayGap();
+
+    expect(gap).toBeNull();
+    expect(storage.peek("awayGap")).toBe(before);
+  });
+
+  test("recordAwayGap returns null and writes nothing for an absent lastActiveAt", async () => {
+    const { storage, store } = createTestStore();
+    const before = storage.peek("awayGap");
+
+    const gap = await store.recordAwayGap();
+
+    expect(gap).toBeNull();
+    expect(storage.peek("awayGap")).toBe(before);
+  });
+
+  test("recordAwayGap never writes lastActiveAt", async () => {
+    const { storage, clock, store } = createTestStore();
+    const lastActiveAt = clock.now() - AWAY_GAP_THRESHOLD - HOUR;
+    await storage.local.set({ lastActiveAt });
+
+    await store.recordAwayGap();
+
+    expect(storage.peek("lastActiveAt")).toBe(lastActiveAt);
+  });
+
+  test("a newer gap replaces an older pending one", async () => {
+    const { storage, clock, store } = createTestStore();
+    await storage.local.set({ lastActiveAt: clock.now() - AWAY_GAP_THRESHOLD - HOUR });
+    const older = await store.recordAwayGap();
+
+    clock.advance(10 * HOUR);
+    await storage.local.set({ lastActiveAt: clock.now() - AWAY_GAP_THRESHOLD - HOUR });
+    const newer = await store.recordAwayGap();
+
+    expect(newer).not.toEqual(older);
+    expect(await store.getAwayGap()).toEqual(newer);
+  });
+
+  test("acceptAwayGap adds the pending range as a merged pause and clears awayGap", async () => {
+    const { storage, clock, store } = createTestStore();
+    const lastActiveAt = clock.now() - AWAY_GAP_THRESHOLD - HOUR;
+    await storage.local.set({ lastActiveAt });
+    const gap = await store.recordAwayGap();
+
+    const pause = await store.acceptAwayGap();
+
+    expect(pause).toEqual({ id: expect.any(String), start: gap!.start, end: gap!.end });
+    expect(await store.getPauses()).toEqual([pause]);
+    expect(await store.getAwayGap()).toBeNull();
+  });
+
+  test("acceptAwayGap merges the gap with a touching existing pause", async () => {
+    const { storage, clock, store } = createTestStore();
+    const lastActiveAt = clock.now() - AWAY_GAP_THRESHOLD - HOUR;
+    const existing = await store.addPause({ start: lastActiveAt - HOUR, end: lastActiveAt });
+    await storage.local.set({ lastActiveAt });
+    await store.recordAwayGap();
+
+    const pause = await store.acceptAwayGap();
+
+    expect(pause).toEqual({ id: existing.id, start: existing.start, end: clock.now() });
+    expect(await store.getPauses()).toEqual([pause]);
+  });
+
+  test("acceptAwayGap with nothing pending makes no write and returns null", async () => {
+    const { storage, store } = createTestStore();
+    const pausesBefore = storage.peek("pauses");
+
+    const pause = await store.acceptAwayGap();
+
+    expect(pause).toBeNull();
+    expect(storage.peek("pauses")).toBe(pausesBefore);
+    expect(storage.peek("awayGap")).toBeUndefined();
+  });
+
+  test("dismissAwayGap clears the pending gap without touching pauses", async () => {
+    const { storage, clock, store } = createTestStore();
+    await storage.local.set({ lastActiveAt: clock.now() - AWAY_GAP_THRESHOLD - HOUR });
+    await store.recordAwayGap();
+    const pausesBefore = storage.peek("pauses");
+
+    await store.dismissAwayGap();
+
+    expect(await store.getAwayGap()).toBeNull();
+    expect(storage.peek("pauses")).toBe(pausesBefore);
+  });
+
+  test("subscribe fires for awayGap changes but still not for lastActiveAt", async () => {
+    const { storage, store } = createTestStore();
+    const received: unknown[] = [];
+    store.subscribe((changes) => received.push(changes));
+
+    await storage.local.set({ lastActiveAt: 123 });
+    expect(received).toHaveLength(0);
+
+    await store.dismissAwayGap();
+    expect(received).toHaveLength(1);
   });
 });

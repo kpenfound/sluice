@@ -1,5 +1,6 @@
 import type { Bucket, Item, Pause, RiffleId } from "../lib/model";
 import { RIFFLES } from "../lib/model";
+import type { TrackedTab } from "../lib/lifecycle";
 import { normalize } from "../lib/normalize";
 import { runningPause } from "../lib/pauses";
 import type { Store } from "../lib/store";
@@ -14,10 +15,14 @@ export interface Tab {
 /** The pause control's state, independent of whether the tab can be queued. */
 export type PopupPauseState = { status: "idle" } | { status: "running"; end: number | null };
 
+/** The keep-open control's state: whether the tab is tracked, and if so its flag. */
+export type PopupKeepOpenState = { tracked: false } | { tracked: true; keepOpen: boolean };
+
 /** The tab's URL isn't `http:` or `https:`, so it can't be queued. */
 export interface UnqueueableState {
   kind: "unqueueable";
   pause: PopupPauseState;
+  keepOpen: PopupKeepOpenState;
 }
 
 /** The tab isn't queued yet: the add form's fields. */
@@ -29,6 +34,7 @@ export interface AddState {
   defaultRiffle: "72h";
   defaultBucketId: string;
   pause: PopupPauseState;
+  keepOpen: PopupKeepOpenState;
 }
 
 /** The tab is already queued: the matched item and where it sits. */
@@ -38,15 +44,18 @@ export interface QueuedState {
   bucketName: string;
   riffle: RiffleId;
   pause: PopupPauseState;
+  keepOpen: PopupKeepOpenState;
 }
 
 export type PopupState = UnqueueableState | AddState | QueuedState;
 
 export interface PopupStateInput {
   tab: Tab;
+  tabId: number;
   buckets: Bucket[];
   items: Item[];
   pauses: Pause[];
+  trackedTabs: TrackedTab[];
   lastBucketId: string | null;
   now: number;
 }
@@ -73,13 +82,17 @@ function defaultBucketId(bucketsByOrder: Bucket[], lastBucketId: string | null):
  * queued item it matches, plus the pause control's state.
  */
 export function popupState(input: PopupStateInput): PopupState {
-  const { tab, buckets, items, pauses, lastBucketId, now } = input;
+  const { tab, tabId, buckets, items, pauses, trackedTabs, lastBucketId, now } = input;
   const running = runningPause(pauses, now);
   const pause: PopupPauseState =
     running !== undefined ? { status: "running", end: running.end } : { status: "idle" };
 
+  const tracked = trackedTabs.find((t) => t.tabId === tabId);
+  const keepOpen: PopupKeepOpenState =
+    tracked !== undefined ? { tracked: true, keepOpen: tracked.keepOpen } : { tracked: false };
+
   if (!isQueueableUrl(tab.url)) {
-    return { kind: "unqueueable", pause };
+    return { kind: "unqueueable", pause, keepOpen };
   }
 
   const normUrl = normalize(tab.url);
@@ -92,6 +105,7 @@ export function popupState(input: PopupStateInput): PopupState {
       bucketName: bucket?.name ?? "",
       riffle: matched.riffle,
       pause,
+      keepOpen,
     };
   }
 
@@ -104,6 +118,7 @@ export function popupState(input: PopupStateInput): PopupState {
     defaultRiffle: "72h",
     defaultBucketId: defaultBucketId(bucketsByOrder, lastBucketId),
     pause,
+    keepOpen,
   };
 }
 
@@ -153,4 +168,9 @@ export async function pause(
 /** Ends the running pause. */
 export function resumePause(store: Store): Promise<Pause | null> {
   return store.resume();
+}
+
+/** Marks or unmarks the given tab as keep-open. */
+export function setKeepOpen(store: Store, tabId: number, keepOpen: boolean): Promise<TrackedTab> {
+  return store.setKeepOpen(tabId, keepOpen);
 }

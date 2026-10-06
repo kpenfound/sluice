@@ -4,29 +4,33 @@
 import { RIFFLES } from "../lib/model";
 import type { RiffleId } from "../lib/model";
 import { createStore } from "../lib/store";
-import { move, pause, popupState, resolve, resumePause, saveTab } from "./model";
+import { move, pause, popupState, resolve, resumePause, saveTab, setKeepOpen } from "./model";
 import type { AddState, PopupState, QueuedState, Tab } from "./model";
 
 const store = createStore(browser.storage);
 const app = document.getElementById("app")!;
 
-async function getActiveTab(): Promise<Tab> {
+async function getActiveTab(): Promise<{ tab: Tab; tabId: number }> {
   const [tab] = await browser.tabs.query({ active: true, currentWindow: true });
   return {
-    url: tab?.url ?? "",
-    title: tab?.title ?? "",
-    ...(tab?.favIconUrl !== undefined ? { favIconUrl: tab.favIconUrl } : {}),
+    tab: {
+      url: tab?.url ?? "",
+      title: tab?.title ?? "",
+      ...(tab?.favIconUrl !== undefined ? { favIconUrl: tab.favIconUrl } : {}),
+    },
+    tabId: tab?.id ?? -1,
   };
 }
 
-async function readState(tab: Tab): Promise<PopupState> {
-  const [buckets, items, pauses, lastBucketId] = await Promise.all([
+async function readState(tab: Tab, tabId: number): Promise<PopupState> {
+  const [buckets, items, pauses, trackedTabs, lastBucketId] = await Promise.all([
     store.getBuckets(),
     store.getItems(),
     store.getPauses(),
+    store.getTrackedTabs(),
     store.getLastBucketId(),
   ]);
-  return popupState({ tab, buckets, items, pauses, lastBucketId, now: Date.now() });
+  return popupState({ tab, tabId, buckets, items, pauses, trackedTabs, lastBucketId, now: Date.now() });
 }
 
 function renderAddForm(container: HTMLElement, tab: Tab, state: AddState): void {
@@ -108,6 +112,22 @@ function renderUnqueueable(container: HTMLElement): void {
   container.append(message);
 }
 
+function renderKeepOpen(container: HTMLElement, tabId: number, state: PopupState): void {
+  if (!state.keepOpen.tracked) {
+    return;
+  }
+
+  const label = document.createElement("label");
+  const checkbox = document.createElement("input");
+  checkbox.type = "checkbox";
+  checkbox.checked = state.keepOpen.keepOpen;
+  checkbox.addEventListener("change", () => {
+    void setKeepOpen(store, tabId, checkbox.checked);
+  });
+  label.append(checkbox, "Keep this tab open");
+  container.append(label);
+}
+
 function renderPauseControl(container: HTMLElement, state: PopupState): void {
   const section = document.createElement("section");
 
@@ -146,8 +166,8 @@ function renderPauseControl(container: HTMLElement, state: PopupState): void {
   container.append(section);
 }
 
-async function render(tab: Tab): Promise<void> {
-  const state = await readState(tab);
+async function render(tab: Tab, tabId: number): Promise<void> {
+  const state = await readState(tab, tabId);
   app.replaceChildren();
 
   const container = document.createElement("div");
@@ -163,15 +183,16 @@ async function render(tab: Tab): Promise<void> {
   } else {
     renderUnqueueable(container);
   }
+  renderKeepOpen(container, tabId, state);
   renderPauseControl(container, state);
 }
 
 async function init(): Promise<void> {
-  const tab = await getActiveTab();
-  await render(tab);
+  const { tab, tabId } = await getActiveTab();
+  await render(tab, tabId);
 
   const unsubscribe = store.subscribe(() => {
-    void render(tab);
+    void render(tab, tabId);
   });
   window.addEventListener("unload", unsubscribe);
 }

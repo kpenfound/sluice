@@ -1,8 +1,9 @@
 import { describe, expect, test } from "vitest";
 import type { Bucket, Item, Pause } from "../lib/model";
+import type { TrackedTab } from "../lib/lifecycle";
 import { createStore } from "../lib/store";
 import type { StorageChange, StorageNamespace } from "../lib/store";
-import { move, pause, popupState, resolve, resumePause, saveTab } from "./model";
+import { move, pause, popupState, resolve, resumePause, saveTab, setKeepOpen } from "./model";
 import type { Tab } from "./model";
 
 type Listener = (changes: Record<string, StorageChange>, areaName: string) => void;
@@ -93,22 +94,62 @@ function makeItem(overrides: Partial<Item> = {}): Item {
   };
 }
 
+function makeTrackedTab(overrides: Partial<TrackedTab> = {}): TrackedTab {
+  return {
+    tabId: 1,
+    windowId: 1,
+    trackId: "track-1",
+    url: "https://example.com/post",
+    title: "A post",
+    keepOpen: false,
+    inactiveSince: null,
+    ...overrides,
+  };
+}
+
 describe("popupState", () => {
   test("an about: tab is unqueueable", () => {
     const tab: Tab = { url: "about:preferences", title: "Preferences" };
-    const state = popupState({ tab, buckets, items: [], pauses: [], lastBucketId: null, now: 0 });
+    const state = popupState({
+      tab,
+      tabId: 1,
+      buckets,
+      items: [],
+      pauses: [],
+      trackedTabs: [],
+      lastBucketId: null,
+      now: 0,
+    });
     expect(state.kind).toBe("unqueueable");
   });
 
   test("a moz-extension: tab is unqueueable", () => {
     const tab: Tab = { url: "moz-extension://abc/page.html", title: "Page" };
-    const state = popupState({ tab, buckets, items: [], pauses: [], lastBucketId: null, now: 0 });
+    const state = popupState({
+      tab,
+      tabId: 1,
+      buckets,
+      items: [],
+      pauses: [],
+      trackedTabs: [],
+      lastBucketId: null,
+      now: 0,
+    });
     expect(state.kind).toBe("unqueueable");
   });
 
   test("an unqueued https tab is the add state, with 72h and buckets in order", () => {
     const tab: Tab = { url: "https://example.com/new", title: "New page" };
-    const state = popupState({ tab, buckets, items: [], pauses: [], lastBucketId: null, now: 0 });
+    const state = popupState({
+      tab,
+      tabId: 1,
+      buckets,
+      items: [],
+      pauses: [],
+      trackedTabs: [],
+      lastBucketId: null,
+      now: 0,
+    });
     expect(state.kind).toBe("add");
     if (state.kind !== "add") throw new Error("expected add state");
     expect(state.title).toBe("New page");
@@ -122,9 +163,11 @@ describe("popupState", () => {
     const tab: Tab = { url: "https://example.com/post#section", title: "A post" };
     const state = popupState({
       tab,
+      tabId: 1,
       buckets,
       items: [item],
       pauses: [],
+      trackedTabs: [],
       lastBucketId: null,
       now: 0,
     });
@@ -140,9 +183,11 @@ describe("popupState", () => {
     const tab: Tab = { url: "https://example.com/post?utm_source=newsletter", title: "A post" };
     const state = popupState({
       tab,
+      tabId: 1,
       buckets,
       items: [item],
       pauses: [],
+      trackedTabs: [],
       lastBucketId: null,
       now: 0,
     });
@@ -154,9 +199,11 @@ describe("popupState", () => {
     const tab: Tab = { url: "https://example.com/post/", title: "A post" };
     const state = popupState({
       tab,
+      tabId: 1,
       buckets,
       items: [item],
       pauses: [],
+      trackedTabs: [],
       lastBucketId: null,
       now: 0,
     });
@@ -167,9 +214,11 @@ describe("popupState", () => {
     const tab: Tab = { url: "https://example.com/new", title: "New page" };
     const state = popupState({
       tab,
+      tabId: 1,
       buckets,
       items: [],
       pauses: [],
+      trackedTabs: [],
       lastBucketId: "b-side",
       now: 0,
     });
@@ -181,9 +230,11 @@ describe("popupState", () => {
     const tab: Tab = { url: "https://example.com/new", title: "New page" };
     const state = popupState({
       tab,
+      tabId: 1,
       buckets,
       items: [],
       pauses: [],
+      trackedTabs: [],
       lastBucketId: null,
       now: 0,
     });
@@ -195,9 +246,11 @@ describe("popupState", () => {
     const tab: Tab = { url: "https://example.com/new", title: "New page" };
     const state = popupState({
       tab,
+      tabId: 1,
       buckets,
       items: [],
       pauses: [],
+      trackedTabs: [],
       lastBucketId: "b-deleted",
       now: 0,
     });
@@ -207,29 +260,148 @@ describe("popupState", () => {
 
   test("pause state is idle with no pauses", () => {
     const tab: Tab = { url: "https://example.com/new", title: "New page" };
-    const state = popupState({ tab, buckets, items: [], pauses: [], lastBucketId: null, now: 1000 });
+    const state = popupState({
+      tab,
+      tabId: 1,
+      buckets,
+      items: [],
+      pauses: [],
+      trackedTabs: [],
+      lastBucketId: null,
+      now: 1000,
+    });
     expect(state.pause).toEqual({ status: "idle" });
   });
 
   test("pause state is idle with only an ended pause", () => {
     const pauses: Pause[] = [{ id: "p1", start: 0, end: 500 }];
     const tab: Tab = { url: "https://example.com/new", title: "New page" };
-    const state = popupState({ tab, buckets, items: [], pauses, lastBucketId: null, now: 1000 });
+    const state = popupState({
+      tab,
+      tabId: 1,
+      buckets,
+      items: [],
+      pauses,
+      trackedTabs: [],
+      lastBucketId: null,
+      now: 1000,
+    });
     expect(state.pause).toEqual({ status: "idle" });
   });
 
   test("pause state is running with a running pause's scheduled end", () => {
     const pauses: Pause[] = [{ id: "p1", start: 0, end: 2000 }];
     const tab: Tab = { url: "https://example.com/new", title: "New page" };
-    const state = popupState({ tab, buckets, items: [], pauses, lastBucketId: null, now: 1000 });
+    const state = popupState({
+      tab,
+      tabId: 1,
+      buckets,
+      items: [],
+      pauses,
+      trackedTabs: [],
+      lastBucketId: null,
+      now: 1000,
+    });
     expect(state.pause).toEqual({ status: "running", end: 2000 });
   });
 
   test("pause state is running with an open-ended pause", () => {
     const pauses: Pause[] = [{ id: "p1", start: 0, end: null }];
     const tab: Tab = { url: "https://example.com/new", title: "New page" };
-    const state = popupState({ tab, buckets, items: [], pauses, lastBucketId: null, now: 1000 });
+    const state = popupState({
+      tab,
+      tabId: 1,
+      buckets,
+      items: [],
+      pauses,
+      trackedTabs: [],
+      lastBucketId: null,
+      now: 1000,
+    });
     expect(state.pause).toEqual({ status: "running", end: null });
+  });
+
+  test("keepOpen is { tracked: false } when the tab has no tracking record", () => {
+    const tab: Tab = { url: "https://example.com/new", title: "New page" };
+    const state = popupState({
+      tab,
+      tabId: 1,
+      buckets,
+      items: [],
+      pauses: [],
+      trackedTabs: [],
+      lastBucketId: null,
+      now: 0,
+    });
+    expect(state.keepOpen).toEqual({ tracked: false });
+  });
+
+  test("keepOpen reflects the tracked tab's flag in the add state", () => {
+    const tab: Tab = { url: "https://example.com/new", title: "New page" };
+    const trackedTabs = [makeTrackedTab({ tabId: 1, keepOpen: true })];
+    const state = popupState({
+      tab,
+      tabId: 1,
+      buckets,
+      items: [],
+      pauses: [],
+      trackedTabs,
+      lastBucketId: null,
+      now: 0,
+    });
+    expect(state.kind).toBe("add");
+    expect(state.keepOpen).toEqual({ tracked: true, keepOpen: true });
+  });
+
+  test("keepOpen reflects the tracked tab's flag in the queued state", () => {
+    const item = makeItem({ normUrl: "https://example.com/post" });
+    const tab: Tab = { url: "https://example.com/post", title: "A post" };
+    const trackedTabs = [makeTrackedTab({ tabId: 1, keepOpen: false })];
+    const state = popupState({
+      tab,
+      tabId: 1,
+      buckets,
+      items: [item],
+      pauses: [],
+      trackedTabs,
+      lastBucketId: null,
+      now: 0,
+    });
+    expect(state.kind).toBe("queued");
+    expect(state.keepOpen).toEqual({ tracked: true, keepOpen: false });
+  });
+
+  test("keepOpen reflects the tracked tab's flag in the unqueueable state", () => {
+    const tab: Tab = { url: "about:preferences", title: "Preferences" };
+    const trackedTabs = [makeTrackedTab({ tabId: 1, keepOpen: true })];
+    const state = popupState({
+      tab,
+      tabId: 1,
+      buckets,
+      items: [],
+      pauses: [],
+      trackedTabs,
+      lastBucketId: null,
+      now: 0,
+    });
+    expect(state.kind).toBe("unqueueable");
+    expect(state.keepOpen).toEqual({ tracked: true, keepOpen: true });
+  });
+
+  test("keepOpen only looks at the record matching the current tab id", () => {
+    const tab: Tab = { url: "https://example.com/new", title: "New page" };
+    const trackedTabs = [makeTrackedTab({ tabId: 2, keepOpen: true })];
+    const state = popupState({
+      tab,
+      tabId: 1,
+      buckets,
+      items: [],
+      pauses: [],
+      trackedTabs,
+      lastBucketId: null,
+      now: 0,
+    });
+    expect(state.keepOpen).toEqual({ tracked: false });
   });
 });
 
@@ -286,9 +458,11 @@ describe("resolve", () => {
 
     const state = popupState({
       tab,
+      tabId: 1,
       buckets: stored,
       items,
       pauses: [],
+      trackedTabs: [],
       lastBucketId: null,
       now: 0,
     });
@@ -344,5 +518,24 @@ describe("resumePause", () => {
     const resumed = await resumePause(store);
 
     expect(resumed?.end).toBe(clock.now());
+  });
+});
+
+describe("setKeepOpen", () => {
+  test("is a pass-through to store.setKeepOpen", async () => {
+    const { store } = createTestStore();
+    await store.trackTab(makeTrackedTab({ tabId: 1, keepOpen: false }));
+
+    const result = await setKeepOpen(store, 1, true);
+
+    expect(result.keepOpen).toBe(true);
+    const [tab] = await store.getTrackedTabs();
+    expect(tab!.keepOpen).toBe(true);
+  });
+
+  test("rejects for an unknown tab id, matching store.setKeepOpen", async () => {
+    const { store } = createTestStore();
+
+    await expect(setKeepOpen(store, 999, true)).rejects.toBeDefined();
   });
 });

@@ -194,22 +194,24 @@ describe("pruning", () => {
     expect(prunePauses([scheduled], items, NOW)).toEqual([scheduled]);
   });
 
-  test("pruning never changes remaining() for any item", () => {
-    const items = [
-      makeItem({ id: "a", riffle: "24h", riffleEnteredAt: NOW - 20 * HOUR }),
-      makeItem({ id: "b", riffle: "72h", riffleEnteredAt: NOW - 10 * HOUR, lastVisitedAt: NOW - 2 * HOUR }),
-      makeItem({ id: "c", riffle: "stale", riffleEnteredAt: NOW - 1000 * DAY }),
-    ];
-    const pauses = [
-      makePause({ id: "p1", start: NOW - 1000 * DAY, end: NOW - 999 * DAY }),
-      makePause({ id: "p2", start: NOW - 5 * HOUR, end: NOW - 4 * HOUR }),
-      makePause({ id: "p3", start: NOW - HOUR, end: null }),
-    ];
+  test("pruning a pause outside any item's anchor window leaves remaining() at its prior figure", () => {
+    // itemA: anchor NOW-20h, TTL 24h; itemB: anchor NOW-2h (last visit, not riffle entry), TTL 72h.
+    const itemA = makeItem({ id: "a", riffle: "24h", riffleEnteredAt: NOW - 20 * HOUR });
+    const itemB = makeItem({ id: "b", riffle: "72h", riffleEnteredAt: NOW - 10 * HOUR, lastVisitedAt: NOW - 2 * HOUR });
+    const items = [itemA, itemB];
+    const p1 = makePause({ id: "p1", start: NOW - 1000 * DAY, end: NOW - 999 * DAY });
+    const p2 = makePause({ id: "p2", start: NOW - 5 * HOUR, end: NOW - 4 * HOUR });
+    const p3 = makePause({ id: "p3", start: NOW - HOUR, end: null });
+    const pauses = [p1, p2, p3];
 
-    const before = items.map((item) => remaining(item, pauses, NOW));
     const pruned = prunePauses(pauses, items, NOW);
-    const after = items.map((item) => remaining(item, pruned, NOW));
 
-    expect(after).toEqual(before);
+    expect(pruned).toEqual([p2, p3]);
+    // itemA: 20h wall-clock minus (p2's 1h + p3's 1h) = 18h active; 24h TTL - 18h = 6h left.
+    expect(remaining(itemA, pauses, NOW)).toBe(6 * HOUR);
+    expect(remaining(itemA, pruned, NOW)).toBe(6 * HOUR);
+    // itemB: 2h wall-clock minus p3's 1h overlap = 1h active (p1/p2 both end before itemB's anchor); 72h TTL - 1h = 71h left.
+    expect(remaining(itemB, pauses, NOW)).toBe(71 * HOUR);
+    expect(remaining(itemB, pruned, NOW)).toBe(71 * HOUR);
   });
 });

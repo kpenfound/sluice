@@ -24,6 +24,10 @@ function makePause(overrides: Partial<Pause> & { id: string; start: number }): P
   return { end: null, ...overrides };
 }
 
+test("AWAY_GAP_THRESHOLD is 72 hours in milliseconds", () => {
+  expect(AWAY_GAP_THRESHOLD).toBe(72 * 60 * 60 * 1000);
+});
+
 describe("detectAwayGap", () => {
   test("returns null at exactly the threshold", () => {
     const lastActiveAt = NOW - AWAY_GAP_THRESHOLD;
@@ -69,24 +73,26 @@ describe("detectAwayGap", () => {
 });
 
 describe("itemsFreedByGap", () => {
-  const gap = { start: NOW - 10 * HOUR, end: NOW };
-
   test("counts an item that went overdue inside the gap", () => {
+    const gap = { start: NOW - 10 * HOUR, end: NOW };
     const item = makeItem({ riffle: "24h", riffleEnteredAt: NOW - 30 * HOUR });
     expect(itemsFreedByGap([item], [], gap, NOW)).toBe(1);
   });
 
   test("doesn't count an item still overdue even with the gap paused", () => {
+    const gap = { start: NOW - 10 * HOUR, end: NOW };
     const item = makeItem({ riffle: "24h", riffleEnteredAt: NOW - 100 * HOUR });
     expect(itemsFreedByGap([item], [], gap, NOW)).toBe(0);
   });
 
   test("doesn't count an item that isn't overdue", () => {
+    const gap = { start: NOW - 10 * HOUR, end: NOW };
     const item = makeItem({ riffle: "1mo", riffleEnteredAt: NOW - HOUR });
     expect(itemsFreedByGap([item], [], gap, NOW)).toBe(0);
   });
 
   test("never counts a Stale item", () => {
+    const gap = { start: NOW - 10 * HOUR, end: NOW };
     const item = makeItem({ riffle: "stale", riffleEnteredAt: NOW - 1000 * HOUR });
     expect(itemsFreedByGap([item], [], gap, NOW)).toBe(0);
   });

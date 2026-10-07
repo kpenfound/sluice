@@ -5,7 +5,11 @@ import { handleVisited } from "./revisit";
 
 type Listener = (changes: Record<string, StorageChange>, areaName: string) => void;
 
-/** An in-memory fake of `storage.local` and `storage.onChanged`, local to this test file. */
+/**
+ * An in-memory fake of `storage.local` and `storage.onChanged`, local to this test file.
+ * It leaves unverified: storage serialization/quota behavior and Firefox's real
+ * `onChanged` listener ordering across multiple pages.
+ */
 class FakeStorage implements StorageNamespace {
   private data: Record<string, unknown> = {};
   private listeners: Listener[] = [];
@@ -103,7 +107,7 @@ describe("handleVisited", () => {
     expect(visited!.lastVisitedAt).toBe(clock.now());
   });
 
-  test("a non-matching URL makes no set call", async () => {
+  test("a visit to an unqueued URL changes no item", async () => {
     const storage = new FakeStorage();
     const clock = makeClock();
     const store = createStore(storage, { now: clock.now, newId: makeIds() });
@@ -122,7 +126,7 @@ describe("handleVisited", () => {
     expect(storage.peek("items")).toBe(itemsBeforeVisit);
   });
 
-  test("a visit without a URL makes no set call", async () => {
+  test("a visit event with no URL changes no item", async () => {
     const storage = new FakeStorage();
     const clock = makeClock();
     const store = createStore(storage, { now: clock.now, newId: makeIds() });

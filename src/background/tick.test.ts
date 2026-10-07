@@ -1,13 +1,16 @@
 import { describe, expect, test } from "vitest";
 import { tick } from "./tick";
-import { badgeText } from "./badge";
 import { createStore } from "../lib/store";
 import type { StorageChange, StorageNamespace } from "../lib/store";
 import { HOUR } from "../lib/model";
 
 type Listener = (changes: Record<string, StorageChange>, areaName: string) => void;
 
-/** An in-memory fake of `storage.local` and `storage.onChanged`, local to this test file. */
+/**
+ * An in-memory fake of `storage.local` and `storage.onChanged`, local to this test file.
+ * It leaves unverified: storage serialization/quota behavior and Firefox's real
+ * `onChanged` listener ordering across multiple pages.
+ */
 class FakeStorage implements StorageNamespace {
   private data: Record<string, unknown> = {};
   private listeners: Listener[] = [];
@@ -72,6 +75,8 @@ function setup() {
   const newId = makeIds();
   const store = createStore(storage, { now: clock.now, newId });
   const badgeTexts: string[] = [];
+  // A recording stub for the toolbar badge: it leaves unverified Firefox's real
+  // per-window badge text state and any text-length limit it enforces.
   const setBadgeText = (text: string): void => {
     badgeTexts.push(text);
   };
@@ -106,7 +111,7 @@ describe("tick", () => {
     expect(storage.peek("pauses")).toBe(before);
   });
 
-  test("sets the badge to badgeText of the post-tick state", async () => {
+  test("shows the overdue count on the badge once a queued item passes its TTL", async () => {
     const { clock, store, setBadgeText, badgeTexts } = setup();
     const bucket = (await store.getBuckets())[0]!;
     await store.addItem({
@@ -119,11 +124,17 @@ describe("tick", () => {
 
     await tick({ store, setBadgeText, now: clock.now });
 
-    const buckets = await store.getBuckets();
-    const items = await store.getItems();
-    const pauses = await store.getPauses();
-    expect(badgeTexts).toEqual([badgeText(buckets, items, pauses, clock.now())]);
     expect(badgeTexts).toEqual(["1"]);
+  });
+
+  test("makes no write to awayGap, even after a long gap since the last tick", async () => {
+    const { storage, clock, store, setBadgeText } = setup();
+    await store.touchActive();
+    clock.advance(1000 * HOUR);
+
+    await tick({ store, setBadgeText, now: clock.now });
+
+    expect(storage.peek("awayGap")).toBeUndefined();
   });
 
   test("a scheduled pause's end passing between two ticks shows the symbol then the count, with no write to that pause", async () => {

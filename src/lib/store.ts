@@ -32,6 +32,8 @@ export interface StorageNamespace {
 export interface StoreOptions {
   now?: () => number;
   newId?: () => string;
+  /** Runs a transaction exclusively across extension pages and the background. */
+  withLock?: <T>(operation: () => Promise<T>) => Promise<T>;
 }
 
 /** Input to `addItem`, the fields a caller supplies for a newly queued or re-queued URL. */
@@ -124,11 +126,15 @@ export function createStore(storage: StorageNamespace, options: StoreOptions = {
   const newId = options.newId ?? (() => crypto.randomUUID());
   const now = options.now ?? Date.now;
 
-  // Serializes every read-modify-write made through this store instance, so
-  // concurrent calls apply in order instead of racing each other's writes.
+  // Web Locks coordinate every extension context; the local queue also preserves call order.
+  const withLock = options.withLock ?? (<T>(operation: () => Promise<T>): Promise<T> => {
+    const locks = globalThis.navigator?.locks;
+    return locks ? locks.request("sluice-storage", operation) : operation();
+  });
   let tail: Promise<unknown> = Promise.resolve();
   function enqueue<T>(fn: () => Promise<T>): Promise<T> {
-    const result = tail.then(fn, fn);
+    const run = () => withLock(fn);
+    const result = tail.then(run, run);
     tail = result.then(
       () => undefined,
       () => undefined,
@@ -208,13 +214,19 @@ export function createStore(storage: StorageNamespace, options: StoreOptions = {
       return Promise.reject(new Error(`Unknown riffle: ${input.riffle}`));
     }
     return enqueue(async () => {
-      const stored = await storage.local.get(["buckets", "items"]);
+      const stored = await storage.local.get(["buckets", "items", "recentlyClosed"]);
       const buckets = (stored.buckets as Bucket[] | undefined) ?? [];
       if (!buckets.some((bucket) => bucket.id === input.bucketId)) {
         throw new Error(`Unknown bucket: ${input.bucketId}`);
       }
       const items = (stored.items as Item[] | undefined) ?? [];
       const normUrl = normalize(input.url);
+      const recentlyClosed = (stored.recentlyClosed as ClosedTab[] | undefined) ?? [];
+      const unqueuedClosed = recentlyClosed.filter((entry) => entry.normUrl !== normUrl);
+      const capture = {
+        lastBucketId: input.bucketId,
+        ...(unqueuedClosed.length !== recentlyClosed.length ? { recentlyClosed: unqueuedClosed } : {}),
+      };
       const index = items.findIndex((item) => item.normUrl === normUrl);
       const whenNow = now();
 
@@ -231,7 +243,7 @@ export function createStore(storage: StorageNamespace, options: StoreOptions = {
           lastVisitedAt: null,
           ...(input.favIconUrl !== undefined ? { favIconUrl: input.favIconUrl } : {}),
         };
-        await storage.local.set({ items: [...items, item] });
+        await storage.local.set({ items: [...items, item], ...capture });
         return item;
       }
 
@@ -244,7 +256,7 @@ export function createStore(storage: StorageNamespace, options: StoreOptions = {
       };
       const nextItems = items.slice();
       nextItems[index] = moved;
-      await storage.local.set({ items: nextItems });
+      await storage.local.set({ items: nextItems, ...capture });
       return moved;
     });
   }
@@ -267,6 +279,7 @@ export function createStore(storage: StorageNamespace, options: StoreOptions = {
 
   /** Puts an item in any riffle, up or down the ladder, including out of Stale. */
   function moveItem(id: string, riffle: RiffleId): Promise<Item> {
+    if (!isRiffleId(riffle)) return Promise.reject(new Error(`Unknown riffle: ${riffle}`));
     return update<Item, Item>("items", (current) => {
       const items = current ?? [];
       const index = items.findIndex((item) => item.id === id);

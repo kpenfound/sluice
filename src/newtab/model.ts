@@ -2,7 +2,7 @@ import type { AwayGap } from "../lib/away";
 import { itemsFreedByGap } from "../lib/away";
 import { isOverdue, overdueCounts, remaining, timeInRiffle, totalAge } from "../lib/due";
 import type { ClosedTab, TrackedTab } from "../lib/lifecycle";
-import { isQueuedUrl, remainingTime } from "../lib/lifecycle";
+import { isClosable, isQueuedUrl, remainingTime } from "../lib/lifecycle";
 import type { Bucket, Item, Pause, RiffleId } from "../lib/model";
 import { DAY, HOUR, RIFFLES } from "../lib/model";
 import { runningPause } from "../lib/pauses";
@@ -29,6 +29,7 @@ export interface ItemView {
   remaining: number | null;
   overdue: boolean;
   bucketName: string;
+  bucketId: string;
 }
 
 /** One riffle column, with its items already ordered per the column ordering rules. */
@@ -71,7 +72,7 @@ export interface LauncherView {
 
 function domainOf(url: string): string {
   try {
-    return new URL(url).hostname;
+    return isClosable(url) ? new URL(url).hostname : "";
   } catch {
     return "";
   }
@@ -89,6 +90,7 @@ function toItemView(item: Item, bucketName: string, pauses: Pause[], now: number
     remaining: remaining(item, pauses, now),
     overdue: isOverdue(item, pauses, now),
     bucketName,
+    bucketId: item.bucketId,
   };
 }
 
@@ -247,6 +249,7 @@ export function keyAction(key: string, inTextInput: boolean): KeyAction | null {
 
 /** A tracked tab's remaining-time cue, shown on Sluice's own pages rather than on the tab itself. */
 export type TabCue =
+  | { kind: "notTimed" }
   | { kind: "active" }
   | { kind: "keptOpen" }
   | { kind: "closing" }
@@ -275,6 +278,7 @@ export interface OpenTabsViewInput {
  * `"active"`/`"keptOpen"` rows, which have no running timer and sort after every running one.
  */
 function tabCue(tab: TrackedTab, autoCloseAfter: number, now: number): { cue: TabCue; sortKey: number } {
+  if (!isClosable(tab.url)) return { cue: { kind: "notTimed" }, sortKey: Infinity };
   if (tab.inactiveSince === null) return { cue: { kind: "active" }, sortKey: Infinity };
   if (tab.keepOpen) return { cue: { kind: "keptOpen" }, sortKey: Infinity };
   const ms = remainingTime(tab, autoCloseAfter, now) as number;

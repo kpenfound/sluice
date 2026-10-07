@@ -136,7 +136,6 @@ export async function saveTab(
     bucketId,
     riffle,
   });
-  await store.setLastBucketId(bucketId);
   return item;
 }
 

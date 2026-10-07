@@ -8,6 +8,8 @@ const pages = ["newtab", "popup", "options"];
 await rm("dist", { recursive: true, force: true });
 await mkdir("dist", { recursive: true });
 await cp("src/manifest.json", "dist/manifest.json");
+await cp("src/common.css", "dist/common.css");
+await cp("src/icon.svg", "dist/icon.svg");
 for (const page of pages) {
   await cp(`src/${page}/index.html`, `dist/${page}.html`);
 }

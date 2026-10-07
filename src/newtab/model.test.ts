@@ -804,3 +804,28 @@ describe("triageView: empty tabs", () => {
     expect(view.closeCount).toBe(0);
   });
 });
+
+test("search preserves bucket identity when bucket names are identical", () => {
+  const view = launcherView(baseInput({
+    buckets: buckets.map((bucket) => ({ ...bucket, name: "Work" })),
+    query: "post",
+    items: [makeItem({ bucketId: "b-personal" })],
+  }));
+  const item = view.columns.find((column) => column.riffle === "72h")!.items[0]!;
+  expect(item.bucketName).toBe("Work");
+  expect(item.bucketId).toBe("b-personal");
+});
+
+test("internal pages have no auto-close countdown or extension identifier", () => {
+  const rows = openTabsView({
+    trackedTabs: [{
+      tabId: 1, windowId: 1, trackId: "internal", title: "Sluice",
+      url: "moz-extension://private-extension-id/newtab.html",
+      keepOpen: false, inactiveSince: NOW - HOUR,
+    }],
+    autoCloseAfter: 2 * HOUR,
+    now: NOW,
+  });
+  expect(rows[0]!.cue).toEqual({ kind: "notTimed" });
+  expect(rows[0]!.domain).toBe("");
+});

@@ -10,6 +10,17 @@ import type { AddState, PopupState, QueuedState, Tab } from "./model";
 const store = createStore(browser.storage);
 const app = document.getElementById("app")!;
 
+function showError(error: unknown): void {
+  let message = document.getElementById("error");
+  if (!message) {
+    message = document.createElement("p");
+    message.id = "error";
+    message.setAttribute("role", "alert");
+    app.append(message);
+  }
+  message.textContent = error instanceof Error ? error.message : String(error);
+}
+
 async function getActiveTab(): Promise<{ tab: Tab; tabId: number }> {
   const [tab] = await browser.tabs.query({ active: true, currentWindow: true });
   return {
@@ -41,6 +52,7 @@ function renderAddForm(container: HTMLElement, tab: Tab, state: AddState): void 
   form.append(title);
 
   const bucketSelect = document.createElement("select");
+  bucketSelect.setAttribute("aria-label", "Bucket");
   for (const bucket of state.buckets) {
     const option = document.createElement("option");
     option.value = bucket.id;
@@ -51,6 +63,7 @@ function renderAddForm(container: HTMLElement, tab: Tab, state: AddState): void 
   form.append(bucketSelect);
 
   const riffleSelect = document.createElement("select");
+  riffleSelect.setAttribute("aria-label", "Riffle");
   for (const riffle of state.riffles) {
     const option = document.createElement("option");
     option.value = riffle;
@@ -69,7 +82,7 @@ function renderAddForm(container: HTMLElement, tab: Tab, state: AddState): void 
     event.preventDefault();
     void saveTab(store, tab, bucketSelect.value, riffleSelect.value as RiffleId).then(() => {
       window.close();
-    });
+    }).catch(showError);
   });
 
   container.append(form);
@@ -82,6 +95,7 @@ function renderQueued(container: HTMLElement, state: QueuedState): void {
   container.append(info);
 
   const riffleSelect = document.createElement("select");
+  riffleSelect.setAttribute("aria-label", "Riffle");
   for (const riffle of RIFFLES) {
     const option = document.createElement("option");
     option.value = riffle;
@@ -94,14 +108,14 @@ function renderQueued(container: HTMLElement, state: QueuedState): void {
   const moveButton = document.createElement("button");
   moveButton.textContent = "Move";
   moveButton.addEventListener("click", () => {
-    void move(store, state.item.id, riffleSelect.value as RiffleId);
+    void move(store, state.item.id, riffleSelect.value as RiffleId).catch(showError);
   });
   container.append(moveButton);
 
   const resolveButton = document.createElement("button");
   resolveButton.textContent = "Resolve";
   resolveButton.addEventListener("click", () => {
-    void resolve(store, state.item.id);
+    void resolve(store, state.item.id).catch(showError);
   });
   container.append(resolveButton);
 }
@@ -122,7 +136,7 @@ function renderKeepOpen(container: HTMLElement, tabId: number, state: PopupState
   checkbox.type = "checkbox";
   checkbox.checked = state.keepOpen.keepOpen;
   checkbox.addEventListener("change", () => {
-    void setKeepOpen(store, tabId, checkbox.checked);
+    void setKeepOpen(store, tabId, checkbox.checked).catch(showError);
   });
   label.append(checkbox, "Keep this tab open");
   container.append(label);
@@ -135,7 +149,7 @@ function renderPauseControl(container: HTMLElement, state: PopupState): void {
     const resumeButton = document.createElement("button");
     resumeButton.textContent = "Resume";
     resumeButton.addEventListener("click", () => {
-      void resumePause(store);
+      void resumePause(store).catch(showError);
     });
     section.append(resumeButton);
 
@@ -150,6 +164,10 @@ function renderPauseControl(container: HTMLElement, state: PopupState): void {
 
     const endInput = document.createElement("input");
     endInput.type = "datetime-local";
+    endInput.setAttribute("aria-label", "Pause until (optional)");
+    const endLabel = document.createElement("label");
+    endLabel.textContent = "Pause until (optional)";
+    endLabel.append(endInput);
 
     const message = document.createElement("p");
 
@@ -157,10 +175,10 @@ function renderPauseControl(container: HTMLElement, state: PopupState): void {
       const end = endInput.value === "" ? null : new Date(endInput.value).getTime();
       void pause(store, end, Date.now()).then((result) => {
         message.textContent = result.ok ? "" : result.error;
-      });
+      }).catch(showError);
     });
 
-    section.append(pauseButton, endInput, message);
+    section.append(pauseButton, endLabel, message);
   }
 
   container.append(section);
@@ -191,10 +209,12 @@ async function init(): Promise<void> {
   const { tab, tabId } = await getActiveTab();
   await render(tab, tabId);
 
-  const unsubscribe = store.subscribe(() => {
-    void render(tab, tabId);
+  const unsubscribe = store.subscribe((changes) => {
+    if (["buckets", "items", "pauses", "trackedTabs", "lastBucketId"].some((key) => key in changes)) {
+      void render(tab, tabId).catch(showError);
+    }
   });
   window.addEventListener("unload", unsubscribe);
 }
 
-void init();
+void init().catch(showError);

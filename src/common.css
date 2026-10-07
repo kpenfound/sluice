@@ -1,0 +1,26 @@
+* { box-sizing: border-box; }
+:root { font: 15px/1.5 system-ui, sans-serif; color: #172d30; background: #f5f7f6; }
+body { margin: 0 auto; padding: 1.5rem; max-width: 100rem; }
+h1 { font-size: 1.6rem; letter-spacing: -.035em; margin: 0 0 1rem; }
+h2 { font-size: 1.05rem; }
+button, input, select { font: inherit; }
+button, select, input:not([type=checkbox]) { border: 1px solid #a7b6b7; border-radius: 6px; padding: .4rem .6rem; color: inherit; background: #fff; max-width: 100%; }
+button { cursor: pointer; }
+button:hover { background: #edf4f2; }
+button:disabled { cursor: default; opacity: .5; }
+:focus-visible { outline: 3px solid #087e83; outline-offset: 3px; }
+label { display: inline-flex; flex-direction: column; gap: .25rem; margin: .3rem .5rem .3rem 0; }
+label:has(input[type=checkbox]) { flex-direction: row; align-items: center; }
+#error, [role=alert] { color: #a4321e; }
+.page-header { display: flex; align-items: baseline; justify-content: space-between; gap: 1rem; }
+.empty-state { padding: 1.5rem; background: #edf4f2; border-radius: 8px; }
+.keyboard-help { font-size: .85rem; color: #52666a; }
+body.options { max-width: 64rem; }
+.options section { padding: 1rem 1.25rem; background: white; border: 1px solid #dae3e1; border-radius: 8px; margin-bottom: 1rem; }
+.options ul { padding: 0; list-style: none; }
+.options li { padding: .5rem 0; border-bottom: 1px solid #e7eeec; }
+.options li p:empty, .options form p:empty { display: none; }
+.options button, .popup button, .popup select { margin: .25rem; }
+body.popup { width: 360px; padding: 1rem; }
+.popup section { border-top: 1px solid #dae3e1; margin-top: 1rem; padding-top: .75rem; }
+.popup p { overflow-wrap: anywhere; }

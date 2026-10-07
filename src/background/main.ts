@@ -92,14 +92,7 @@ async function refreshBadge(api: BackgroundApi, store: Store): Promise<void> {
   await api.action.setBadgeText({ text: badgeText(buckets, items, pauses, Date.now()) });
 }
 
-/**
- * Registers every background listener synchronously against `api`, then ensures the
- * per-minute alarm exists. Carries no state between events: each handler reads
- * whatever it needs from storage through a store built fresh from `api.storage`, and the
- * one piece of state kept across events within a single `start()` call — the previous
- * `trackedTabs` array, for mirroring changes to `sessions` — lives in this function's own
- * closure, not at module level, so two `start()` calls stay independent.
- */
+/** Registers background listeners synchronously; persistent state is read through the store. */
 export function start(api: BackgroundApi): void {
   const now = Date.now;
   const newId = (): string => crypto.randomUUID();
@@ -111,8 +104,6 @@ export function start(api: BackgroundApi): void {
   const launcherUrl = api.runtime.getURL(LAUNCHER_PAGE);
   const washUrl = api.runtime.getURL(WASH_PAGE);
   const washDeps: WashDeps = { store, tabs: api.tabs, launcherUrl, washUrl };
-
-  let previousTrackedTabs: TrackedTab[] = [];
 
   api.alarms.onAlarm.addListener((alarm) => {
     if (alarm.name === ALARM_NAME) void runTick(api, store, tabSyncDeps);
@@ -172,8 +163,8 @@ export function start(api: BackgroundApi): void {
 
     if ("trackedTabs" in changes) {
       const current = (changes.trackedTabs?.newValue as TrackedTab[] | undefined) ?? [];
-      void syncSessionValues(tabSyncDeps, previousTrackedTabs, current);
-      previousTrackedTabs = current;
+      const previous = (changes.trackedTabs?.oldValue as TrackedTab[] | undefined) ?? [];
+      void syncSessionValues(tabSyncDeps, previous, current);
     }
   });
 

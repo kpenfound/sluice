@@ -1456,3 +1456,75 @@ describe("lifecycle", () => {
     });
   });
 });
+
+describe("storage shared across extension contexts", () => {
+  function contexts() {
+    const storage = new FakeStorage();
+    let tail: Promise<unknown> = Promise.resolve();
+    const withLock = <T>(operation: () => Promise<T>): Promise<T> => {
+      const result = tail.then(operation, operation);
+      tail = result.catch(() => undefined);
+      return result;
+    };
+    return {
+      popup: createStore(storage, { withLock, newId: makeIds("popup") }),
+      background: createStore(storage, { withLock, newId: makeIds("background") }),
+    };
+  }
+
+  test("simultaneous first reads agree on default bucket identities", async () => {
+    const { popup, background } = contexts();
+    const [first, second] = await Promise.all([popup.getBuckets(), background.getBuckets()]);
+    expect(first).toEqual(second);
+    expect(await popup.getBuckets()).toEqual(first);
+  });
+
+  test("an add and a history revisit from separate contexts both persist", async () => {
+    const { popup, background } = contexts();
+    const [bucket] = await popup.getBuckets();
+    const input = { url: "https://example.com/first", title: "First", bucketId: bucket!.id, riffle: "72h" as const };
+    await popup.addItem(input);
+    await Promise.all([
+      popup.addItem({ ...input, url: "https://example.com/second" }),
+      background.recordVisit(input.url),
+    ]);
+    const items = await popup.getItems();
+    expect(items).toHaveLength(2);
+    expect(items.find((item) => item.url === input.url)?.lastVisitedAt).not.toBeNull();
+  });
+
+  test("simultaneous capture of the same URL preserves uniqueness", async () => {
+    const { popup, background } = contexts();
+    const [bucket] = await popup.getBuckets();
+    const input = { url: "https://example.com", title: "Example", bucketId: bucket!.id, riffle: "72h" as const };
+    const [first, second] = await Promise.all([popup.addItem(input), background.addItem(input)]);
+    expect(first.id).toBe(second.id);
+    expect(await popup.getItems()).toHaveLength(1);
+  });
+
+  test("a rejected transaction releases the lock for another context", async () => {
+    const { popup, background } = contexts();
+    await expect(popup.renameBucket("missing", "Name")).rejects.toThrow();
+    expect(await background.getBuckets()).toHaveLength(3);
+  });
+});
+
+test("capture remembers the bucket and removes recently closed copies before resolve", async () => {
+  const { store, storage } = createTestStore();
+  const buckets = await store.getBuckets();
+  await store.trackTab(makeTrackedTab());
+  await store.recordTabClosed(1);
+  expect(await store.getRecentlyClosed()).toHaveLength(1);
+  storage.setCalls = [];
+  const item = await store.addItem({
+    url: "https://example.com/?utm_source=capture",
+    title: "Example",
+    bucketId: buckets[1]!.id,
+    riffle: "72h",
+  });
+  expect(storage.setCalls).toHaveLength(1);
+  expect(await store.getLastBucketId()).toBe(buckets[1]!.id);
+  expect(await store.getRecentlyClosed()).toEqual([]);
+  await store.resolveItem(item.id);
+  expect(await store.getRecentlyClosed()).toEqual([]);
+});

@@ -857,9 +857,9 @@ describe("start", () => {
     expect(storage.peek("lastActiveAt")).toBeTypeOf("number");
     expect(second.badgeTexts.at(-1)).toBe("");
 
-    // Each `start()` keeps its own independent "previous trackedTabs" closure: a tab
+    // Storage changes supply their previous values: a tab
     // created through the second start's tab events is tracked and mirrored to its own
-    // fake sessions, with no leftover state from the first start's (empty) closure.
+    // fake sessions using the previous value carried by its storage event.
     second.tabs.onCreated.fire(makeTab({ id: 1, windowId: 1, active: true, url: "https://example.com/" }));
     await flush();
 

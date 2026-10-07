@@ -2,7 +2,7 @@
 
 A Firefox extension that makes every tab disposable. You close all your tabs whenever you step away. Anything you mean to come back to sits in a queue that decays on a schedule, so the queues can't grow into a second backlog.
 
-Status: design, pre-implementation. Firefox only.
+Status: implemented for the initial release. Firefox only.
 
 ## Problem
 
@@ -187,7 +187,7 @@ Sluice uses ranges. A retroactive pause is just a range with a start in the past
 The likely failure is coming back from a week off and only then remembering. Sluice detects the gap.
 
 - The background alarm writes `lastActiveAt` every minute while Firefox runs. Alarms don't fire while Firefox is closed.
-- On startup, if `now - lastActiveAt` is more than 48 hours, the new tab page shows a banner offering to pause the gap. The banner shows the gap's dates and how many items would stop being overdue. One click saves it.
+- On startup, if `now - lastActiveAt` is more than 72 hours, the new tab page shows a banner offering to pause the gap. The banner shows the gap's dates and how many items would stop being overdue. One click saves it.
 - If I dismiss the banner, the gap isn't offered again.
 
 This only catches time with Firefox closed. A week away with Firefox left running on a desktop won't show a gap, so a manual past-range pause is still needed. Idle time from the `idle` API could fill that hole later.
@@ -255,9 +255,9 @@ Proposed for later: auto-wash after the `idle` API reports N minutes idle. Skip 
 
 |Command|Default|
 |---|---|
-|Add current tab|`_execute_action`, which opens the popup|
+|Add current tab|`Alt+Shift+S` (`_execute_action`), which opens the popup|
 |Wash|none; bound in Firefox's shortcut settings, like Open launcher|
-|Open launcher|TBD|
+|Open launcher|none; bound in Firefox’s shortcut settings|
 
 Users can rebind these in Firefox's extension shortcuts settings.
 
@@ -270,7 +270,7 @@ Users can rebind these in Firefox's extension shortcuts settings.
     - `runtime.onStartup`, to check for an away gap.
     - The wash command and tab closing.
 - The new tab page and popup are extension pages. They read and write `storage.local` directly and listen to `storage.onChanged` to stay in sync.
-- Storage is `storage.local`, with separate keys for buckets, items, pauses, and `lastActiveAt`. A few hundred items fit easily. Writes go through one small module so a later move to IndexedDB or `storage.sync` touches one file.
+- Storage is `storage.local`, with separate keys for buckets, items, pauses, and `lastActiveAt`. A few hundred items fit easily. Writes go through one small module so a later move to IndexedDB or `storage.sync` touches one file. A shared Web Lock serializes storage transactions across the background, popup, launcher and options page.
 
 ### Permissions
 
@@ -312,7 +312,7 @@ Sluice ships with three default buckets: Dagger, Side projects, Personal. A basi
 ## Open questions
 
 1. Should wash skip tabs playing audio or tabs with unsaved form input?
-	1. answer: wash skips tabs playing audio. The unsaved-form-input exemption was dropped (workstream 5) so that wash needs no page-content permission.
+	1. answer: wash skips tabs playing audio. Wash has no unsaved-form-input exemption and needs no page-content permission.
 2. Should wash act on the current window or all windows?
 	1. answer: all windows
 3. Should private windows count? `history.onVisited` doesn't fire there, so revisits in private windows won't register either way.
@@ -326,3 +326,6 @@ Sluice ships with three default buckets: Dagger, Side projects, Personal. A basi
 1. Tab auto-close timer should be configurable and should start as soon as a tab is unfocused (i leave the tab for another tab). There should be some visual cue on each tabs remaining time. Revisiting the tab should reset the timer. Default timer should be 2h. A focused tab in any window cannot get auto-closed
 2. All closed tabs (auto or by user) that did not get put into a bucket before getting closed should be in a "recently closed" list on the new tab page. This is *only* uncategorized tabs, not all closed tabs. From there I can re-open the tab or move it to bucket
 3. I should be able to set an open tab to not get auto-closed
+4. Remaining-time cues appear in the launcher's Open tabs list. Browser tab titles and favicons are not modified. The popup and Open tabs list both offer Keep open.
+5. Auto-close applies only to HTTP(S) tabs and skips audible tabs as well as active tabs and keep-open tabs. It runs on the one-minute alarm. Pausing freezes queue TTLs; it does not stop tab auto-close timers.
+6. Recently closed contains only unqueued HTTP(S) URLs, deduplicated by normalized URL, for at most seven days and 100 entries. The newest close replaces an older entry for the same URL. Queuing a URL removes its recently closed entry, and every capture surface remembers the selected bucket. Browser-internal pages, extension pages and local files do not appear there. Wash can close those pages, but triage lists only unqueued HTTP(S) tabs.

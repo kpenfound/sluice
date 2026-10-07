@@ -36,9 +36,14 @@
   },
   "action": {
     "default_title": "Sluice",
-    "default_popup": "popup.html"
+    "default_popup": "popup.html",
+    "default_icon": "icon.svg"
   },
   "options_ui": {
     "page": "options.html"
+  },
+  "icons": {
+    "48": "icon.svg",
+    "96": "icon.svg"
   }
 }

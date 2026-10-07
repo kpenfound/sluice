@@ -38,16 +38,20 @@ function run(command, args) {
   execFileSync(command, args, { stdio: "inherit" });
 }
 
-const versionOutput = execFileSync("npm", ["version", kind, "--no-git-tag-version"], {
-  encoding: "utf8",
-}).trim();
-const version = versionOutput.replace(/^v/, "");
+// Validate the exact source being released before changing any version files.
+run("dagger", ["check", "--progress=report"]);
 
-const manifest = JSON.parse(await readFile("src/manifest.json", "utf8"));
-manifest.version = version;
-await writeFile("src/manifest.json", `${JSON.stringify(manifest, null, 2)}\n`);
-
+let version;
 try {
+  const versionOutput = execFileSync("npm", ["version", kind, "--no-git-tag-version"], {
+    encoding: "utf8",
+  }).trim();
+  version = versionOutput.replace(/^v/, "");
+
+  const manifest = JSON.parse(await readFile("src/manifest.json", "utf8"));
+  manifest.version = version;
+  await writeFile("src/manifest.json", `${JSON.stringify(manifest, null, 2)}\n`);
+
   run("npm", ["run", "build"]);
   run("npx", [
     "web-ext",

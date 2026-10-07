@@ -2,6 +2,8 @@
 <html lang="en">
   <head>
     <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <link rel="stylesheet" href="common.css" />
     <title>New Tab</title>
     <style>
       body {
@@ -352,10 +354,17 @@
         background: #fff;
         cursor: pointer;
       }
+      .item-title, .item-domain { overflow-wrap: anywhere; }
+      .open-tab-row { flex-wrap: wrap; }
+      .item-actions select { min-width: 0; max-width: 100%; }
+      @media (max-width: 1100px) {
+        .columns { flex-wrap: wrap; }
+        .column { flex: 1 1 16rem; }
+      }
     </style>
     <script type="module" src="newtab.js"></script>
   </head>
-  <body>
-    <div id="app"></div>
+  <body class="newtab">
+    <main id="app"></main>
   </body>
 </html>

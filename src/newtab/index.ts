@@ -31,7 +31,6 @@ const TRIAGE_MODE = new URLSearchParams(window.location.search).get("wash") === 
 
 // The most recently rendered view, so event handlers can check whether actions are currently
 // allowed at call time rather than trusting a closure captured when their control was drawn.
-// This is also the accessor newtab-ui-keyboard consults before acting on a key.
 let currentView: LauncherView | null = null;
 
 /** Whether item actions are currently allowed, per the most recent render. False before the first render. */
@@ -139,12 +138,6 @@ function renderFavicon(favIconUrl: string | undefined): HTMLElement {
   return placeholder;
 }
 
-/** The bucket id to preselect in an item's Change bucket control: the item's own bucket when searching, otherwise the shown bucket. */
-function bucketIdForItem(item: ItemView, view: LauncherView, searching: boolean): string {
-  if (!searching) return view.selectedBucketId;
-  return view.buckets.find((bucket) => bucket.name === item.bucketName)?.id ?? "";
-}
-
 function renderItemCard(item: ItemView, riffle: RiffleId, view: LauncherView, searching: boolean): HTMLElement {
   const card = document.createElement("div");
   card.className = item.overdue ? "item-card overdue" : "item-card";
@@ -239,7 +232,7 @@ function renderItemCard(item: ItemView, riffle: RiffleId, view: LauncherView, se
     optionEl.textContent = bucket.name;
     bucketSelect.append(optionEl);
   }
-  bucketSelect.value = bucketIdForItem(item, view, searching);
+  bucketSelect.value = item.bucketId;
   bucketSelect.addEventListener("change", () => {
     if (!actionsEnabled()) return;
     void runAction(() => store.changeBucket(item.id, bucketSelect.value));
@@ -271,6 +264,7 @@ function renderColumn(column: Column, view: LauncherView, searching: boolean): H
     header.type = "button";
     header.className = "stale-header";
     header.textContent = `Stale (${column.items.length})`;
+    header.setAttribute("aria-expanded", String(expanded));
     header.addEventListener("click", () => {
       if (state === null) return;
       state.staleExpanded = !state.staleExpanded;
@@ -304,6 +298,7 @@ function renderBucketSwitcher(view: LauncherView): HTMLElement {
     button.type = "button";
     button.className = bucket.selected ? "bucket-button selected" : "bucket-button";
     button.textContent = `${bucket.name} (${bucket.overdueCount})`;
+    button.setAttribute("aria-pressed", String(bucket.selected));
     button.addEventListener("click", () => {
       if (state === null) return;
       state.selectedBucketId = bucket.id;
@@ -319,6 +314,7 @@ function renderSearch(): HTMLInputElement {
   input.type = "search";
   input.className = "search-input";
   input.placeholder = "Search every bucket and riffle";
+  input.setAttribute("aria-label", "Search every bucket and riffle");
   input.value = state?.query ?? "";
   input.addEventListener("input", () => {
     if (state === null) return;
@@ -370,15 +366,17 @@ function renderAwayGapBanner(banner: AwayGapBanner): HTMLElement {
   return div;
 }
 
-/** The cue's display text, per spec#7: a running timer's own label, or "active"/"kept open"/"closing now". */
+/** Formats a tab's remaining-time cue. */
 function cueText(cue: TabCue): string {
   switch (cue.kind) {
+    case "notTimed":
+      return "not auto-closed";
     case "active":
       return "active";
     case "keptOpen":
       return "kept open";
     case "closing":
-      return "closing now";
+      return "timer expired";
     case "remaining":
       return cue.label;
   }
@@ -565,6 +563,12 @@ function renderRecentlyClosedPanel(entries: ClosedTab[], buckets: Bucket[]): HTM
   const list = document.createElement("div");
   list.className = "closed-tabs-list";
   for (const entry of entries) list.append(renderClosedRow(entry, buckets));
+  if (entries.length === 0) {
+    const empty = document.createElement("p");
+    empty.className = "keyboard-help";
+    empty.textContent = "Unqueued web tabs appear here after closing, for up to 7 days or 100 entries.";
+    list.append(empty);
+  }
   section.append(list);
 
   return section;
@@ -614,6 +618,9 @@ function restoreFocusedCard(info: FocusedCardInfo | null): void {
 
 function render(): void {
   const focusInfo = captureFocusedCardInfo();
+  const focused = document.activeElement;
+  const searchSelection = focused instanceof HTMLInputElement && focused.type === "search"
+    ? [focused.selectionStart, focused.selectionEnd] as const : null;
   app.replaceChildren();
 
   if (state === null) {
@@ -644,14 +651,23 @@ function render(): void {
     app.append(messageEl);
   }
 
+  const header = document.createElement("header");
+  header.className = "page-header";
+  const heading = document.createElement("h1");
+  heading.textContent = "Sluice";
+  const settings = document.createElement("button");
+  settings.textContent = "Settings";
+  settings.addEventListener("click", () => void runAction(() => browser.runtime.openOptionsPage()));
+  header.append(heading, settings);
+  app.append(header);
   app.append(renderBucketSwitcher(view));
 
   const searchInput = renderSearch();
   app.append(searchInput);
-  if (state.searchFocused) {
+  if (searchSelection !== null || state.searchFocused) {
     searchInput.focus();
     const pos = searchInput.value.length;
-    searchInput.setSelectionRange(pos, pos);
+    searchInput.setSelectionRange(searchSelection?.[0] ?? pos, searchSelection?.[1] ?? pos);
   }
 
   if (view.pauseBanner !== null) app.append(renderPauseBanner(view.pauseBanner));
@@ -671,6 +687,16 @@ function render(): void {
   columns.className = "columns";
   for (const column of view.columns) columns.append(renderColumn(column, view, searching));
   app.append(columns);
+  if (view.columns.every((column) => column.items.length === 0)) {
+    const empty = document.createElement("p");
+    empty.className = "empty-state";
+    empty.textContent = searching ? "No queued items match your search." : "Nothing queued here yet. Use Alt+Shift+S or the toolbar button on a page to save it for later.";
+    app.append(empty);
+  }
+  const help = document.createElement("p");
+  help.className = "keyboard-help";
+  help.textContent = "Keyboard: / search · arrows or h j k l navigate cards · Enter open · d defer · m move · b change bucket · x resolve · [ ] switch buckets";
+  app.append(help);
 
   restoreFocusedCard(focusInfo);
 }
@@ -795,6 +821,8 @@ function dispatchCardAction(action: KeyAction, card: HTMLElement): void {
  */
 function handleKeydown(event: KeyboardEvent): void {
   if (event.ctrlKey || event.metaKey || event.altKey) return;
+  // Native controls keep Enter, Space and arrow-key behavior.
+  if (event.target instanceof Element && event.target.closest("button, a, input[type=checkbox]")) return;
 
   const action = keyAction(event.key, isTextInputTarget(event.target));
   if (action === null) return;
@@ -838,8 +866,10 @@ async function init(): Promise<void> {
 
   document.addEventListener("keydown", handleKeydown);
 
-  const unsubscribe = store.subscribe(() => {
-    void loadData();
+  const unsubscribe = store.subscribe((changes) => {
+    if (Object.keys(changes).some((key) => key !== "lastActiveAt" && key !== "lastBucketId")) {
+      void loadData().catch(showError);
+    }
   });
 
   const timer = setInterval(() => render(), 60_000);
@@ -1058,8 +1088,8 @@ function renderTriage(): void {
 async function initTriage(): Promise<void> {
   await loadTriageData();
 
-  const unsubscribe = store.subscribe(() => {
-    void loadTriageData();
+  const unsubscribe = store.subscribe((changes) => {
+    if (Object.keys(changes).some((key) => key !== "lastActiveAt")) void loadTriageData();
   });
 
   const timer = setInterval(() => {
@@ -1072,4 +1102,9 @@ async function initTriage(): Promise<void> {
   });
 }
 
-void (TRIAGE_MODE ? initTriage() : init());
+void (TRIAGE_MODE ? initTriage() : init()).catch((error: unknown) => {
+  const message = document.createElement("p");
+  message.setAttribute("role", "alert");
+  message.textContent = `Unable to load Sluice: ${error instanceof Error ? error.message : String(error)}`;
+  app.replaceChildren(message);
+});

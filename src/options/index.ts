@@ -21,6 +21,17 @@ const app = document.getElementById("app")!;
 // not store state, so it survives a re-render triggered by some other write.
 let editingPauseId: string | null = null;
 
+function showError(err: unknown): void {
+  let message = document.getElementById("error");
+  if (!message) {
+    message = document.createElement("p");
+    message.id = "error";
+    message.setAttribute("role", "alert");
+    app.append(message);
+  }
+  message.textContent = errorMessage(err);
+}
+
 function errorMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
@@ -31,6 +42,7 @@ function renderBucketRow(list: HTMLElement, bucket: Bucket): void {
   const nameInput = document.createElement("input");
   nameInput.type = "text";
   nameInput.value = bucket.name;
+  nameInput.setAttribute("aria-label", `Name for ${bucket.name}`);
   li.append(nameInput);
 
   const message = document.createElement("p");
@@ -61,6 +73,7 @@ function renderAddBucketForm(container: HTMLElement): void {
   const nameInput = document.createElement("input");
   nameInput.type = "text";
   nameInput.placeholder = "New bucket name";
+  nameInput.setAttribute("aria-label", "New bucket name");
   form.append(nameInput);
 
   const message = document.createElement("p");
@@ -115,7 +128,10 @@ function buildPauseFields(prefill?: { start: number; end: number | "until resume
   const startInput = document.createElement("input");
   startInput.type = "datetime-local";
   if (prefill !== undefined) startInput.value = toDateTimeLocal(prefill.start);
-  fieldset.append(startInput);
+  const startInputLabel = document.createElement("label");
+  startInputLabel.textContent = "Start";
+  startInputLabel.append(startInput);
+  fieldset.append(startInputLabel);
 
   const endModeSelect = document.createElement("select");
   const modes: Array<{ value: PauseFormInput["endMode"]; label: string }> = [
@@ -129,11 +145,17 @@ function buildPauseFields(prefill?: { start: number; end: number | "until resume
     option.textContent = mode.label;
     endModeSelect.append(option);
   }
-  fieldset.append(endModeSelect);
+  const endModeSelectLabel = document.createElement("label");
+  endModeSelectLabel.textContent = "End";
+  endModeSelectLabel.append(endModeSelect);
+  fieldset.append(endModeSelectLabel);
 
   const endInput = document.createElement("input");
   endInput.type = "datetime-local";
-  fieldset.append(endInput);
+  const endInputLabel = document.createElement("label");
+  endInputLabel.textContent = "End date and time";
+  endInputLabel.append(endInput);
+  fieldset.append(endInputLabel);
 
   if (prefill !== undefined) {
     if (prefill.end === "until resumed") {
@@ -156,7 +178,10 @@ function buildPauseFields(prefill?: { start: number; end: number | "until resume
   labelInput.type = "text";
   labelInput.placeholder = "Label (optional)";
   labelInput.value = prefill?.label ?? "";
-  fieldset.append(labelInput);
+  const labelInputLabel = document.createElement("label");
+  labelInputLabel.textContent = "Label (optional)";
+  labelInputLabel.append(labelInput);
+  fieldset.append(labelInputLabel);
 
   return {
     fieldset,
@@ -202,7 +227,7 @@ function renderPauseEditForm(list: HTMLElement, row: PauseRow): void {
   cancelButton.textContent = "Cancel";
   cancelButton.addEventListener("click", () => {
     editingPauseId = null;
-    void renderApp();
+    void renderApp().catch(showError);
   });
   li.append(cancelButton);
 
@@ -230,7 +255,7 @@ function renderPauseRow(list: HTMLElement, row: PauseRow): void {
   editButton.textContent = "Edit";
   editButton.addEventListener("click", () => {
     editingPauseId = row.id;
-    void renderApp();
+    void renderApp().catch(showError);
   });
   li.append(editButton);
 
@@ -238,7 +263,7 @@ function renderPauseRow(list: HTMLElement, row: PauseRow): void {
   deleteButton.type = "button";
   deleteButton.textContent = "Delete";
   deleteButton.addEventListener("click", () => {
-    void store.deletePause(row.id);
+    void store.deletePause(row.id).catch(showError);
   });
   li.append(deleteButton);
 
@@ -311,7 +336,7 @@ function renderTabs(container: HTMLElement, autoCloseAfter: number): void {
   minutesInput.min = "1";
   minutesInput.step = "1";
   minutesInput.value = String(autoCloseMinutes(autoCloseAfter));
-  form.append(minutesInput);
+  label.append(minutesInput);
 
   const message = document.createElement("p");
 
@@ -348,6 +373,9 @@ async function renderApp(): Promise<void> {
   const rows = pauseRows(pauses, Date.now());
 
   app.replaceChildren();
+  const heading = document.createElement("h1");
+  heading.textContent = "Sluice settings";
+  app.append(heading);
   const container = document.createElement("div");
   app.append(container);
 
@@ -356,8 +384,8 @@ async function renderApp(): Promise<void> {
   renderTabs(container, autoCloseAfter);
 }
 
-void renderApp();
-const unsubscribe = store.subscribe(() => {
-  void renderApp();
+void renderApp().catch(showError);
+const unsubscribe = store.subscribe((changes) => {
+  if (["buckets", "pauses", "autoCloseAfter"].some((key) => key in changes)) void renderApp().catch(showError);
 });
 window.addEventListener("unload", unsubscribe);

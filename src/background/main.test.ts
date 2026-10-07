@@ -52,10 +52,6 @@ class FakeStorage implements StorageNamespace {
     },
   };
 
-  peek(key: string): unknown {
-    return this.data[key];
-  }
-
   get listenerCount(): number {
     return this.listeners.length;
   }
@@ -342,6 +338,7 @@ describe("start", () => {
     const storage = new FakeStorage();
     const alarms = new FakeAlarms();
     const { api, badgeTexts } = makeApi(storage, alarms);
+    const store = createStore(storage);
 
     start(api);
     await flush();
@@ -349,7 +346,7 @@ describe("start", () => {
     alarms.onAlarm.fire({ name: "sluice-tick", scheduledTime: 0 });
     await flush();
 
-    expect(storage.peek("lastActiveAt")).toBeTypeOf("number");
+    expect(await store.getLastActiveAt()).toBeTypeOf("number");
     expect(badgeTexts.at(-1)).toBe("");
   });
 
@@ -357,6 +354,7 @@ describe("start", () => {
     const storage = new FakeStorage();
     const alarms = new FakeAlarms();
     const { api, badgeTexts } = makeApi(storage, alarms);
+    const store = createStore(storage);
 
     start(api);
     await flush();
@@ -365,7 +363,7 @@ describe("start", () => {
     alarms.onAlarm.fire({ name: "some-other-alarm", scheduledTime: 0 });
     await flush();
 
-    expect(storage.peek("lastActiveAt")).toBeUndefined();
+    expect(await store.getLastActiveAt()).toBeNull();
     expect(badgeTexts).toEqual([]);
   });
 
@@ -373,12 +371,13 @@ describe("start", () => {
     const storage = new FakeStorage();
     const alarms = new FakeAlarms();
     const { api, onInstalled, badgeTexts } = makeApi(storage, alarms);
+    const store = createStore(storage);
 
     start(api);
     onInstalled.fire({ reason: "install", temporary: false });
     await flush();
 
-    expect(storage.peek("lastActiveAt")).toBeTypeOf("number");
+    expect(await store.getLastActiveAt()).toBeTypeOf("number");
     expect(badgeTexts.at(-1)).toBe("");
   });
 
@@ -386,6 +385,7 @@ describe("start", () => {
     const storage = new FakeStorage();
     const alarms = new FakeAlarms();
     const { api, onInstalled, tabs } = makeApi(storage, alarms);
+    const store = createStore(storage);
     await storage.local.set({
       trackedTabs: [
         {
@@ -408,7 +408,7 @@ describe("start", () => {
     onInstalled.fire({ reason: "install", temporary: false });
     await flush();
 
-    const tracked = storage.peek("trackedTabs") as Array<{ tabId: number; trackId: string }>;
+    const tracked = await store.getTrackedTabs();
     expect(tracked.find((tab) => tab.tabId === 1)?.trackId).toBe("kept");
     expect(tracked.some((tab) => tab.tabId === 2)).toBe(true);
   });
@@ -417,12 +417,13 @@ describe("start", () => {
     const storage = new FakeStorage();
     const alarms = new FakeAlarms();
     const { api, onStartup, badgeTexts } = makeApi(storage, alarms);
+    const store = createStore(storage);
 
     start(api);
     onStartup.fire();
     await flush();
 
-    expect(storage.peek("lastActiveAt")).toBeTypeOf("number");
+    expect(await store.getLastActiveAt()).toBeTypeOf("number");
     expect(badgeTexts.at(-1)).toBe("");
   });
 
@@ -431,6 +432,7 @@ describe("start", () => {
     const storage = new FakeStorage();
     const alarms = new FakeAlarms();
     const { api, onStartup } = makeApi(storage, alarms);
+    const store = createStore(storage);
     const oldLastActiveAt = FIXED_NOW - 73 * HOUR;
     await storage.local.set({ lastActiveAt: oldLastActiveAt });
 
@@ -438,11 +440,10 @@ describe("start", () => {
     onStartup.fire();
     await flush();
 
-    const gap = storage.peek("awayGap") as { start: number; end: number };
-    expect(gap.start).toBe(oldLastActiveAt);
-    expect(gap.end).toBe(FIXED_NOW);
-    const lastActiveAt = storage.peek("lastActiveAt") as number;
-    expect(lastActiveAt).toBe(FIXED_NOW);
+    const gap = await store.getAwayGap();
+    expect(gap?.start).toBe(oldLastActiveAt);
+    expect(gap?.end).toBe(FIXED_NOW);
+    expect(await store.getLastActiveAt()).toBe(FIXED_NOW);
   });
 
   test("firing onStartup with lastActiveAt exactly 72h old leaves awayGap unset", async () => {
@@ -450,6 +451,7 @@ describe("start", () => {
     const storage = new FakeStorage();
     const alarms = new FakeAlarms();
     const { api, onStartup } = makeApi(storage, alarms);
+    const store = createStore(storage);
     const exactLastActiveAt = FIXED_NOW - 72 * HOUR;
     await storage.local.set({ lastActiveAt: exactLastActiveAt });
 
@@ -457,19 +459,20 @@ describe("start", () => {
     onStartup.fire();
     await flush();
 
-    expect(storage.peek("awayGap")).toBeUndefined();
+    expect(await store.getAwayGap()).toBeNull();
   });
 
   test("firing onStartup with no prior lastActiveAt leaves awayGap unset", async () => {
     const storage = new FakeStorage();
     const alarms = new FakeAlarms();
     const { api, onStartup } = makeApi(storage, alarms);
+    const store = createStore(storage);
 
     start(api);
     onStartup.fire();
     await flush();
 
-    expect(storage.peek("awayGap")).toBeUndefined();
+    expect(await store.getAwayGap()).toBeNull();
   });
 
   test("firing onStartup records the away gap from the stale lastActiveAt, then restores tracking (adopting keepOpen from sessions) before the tick runs", async () => {
@@ -477,18 +480,20 @@ describe("start", () => {
     const storage = new FakeStorage();
     const alarms = new FakeAlarms();
     const { api, onStartup, tabs, sessions, badgeTexts } = makeApi(storage, alarms);
+    const store = createStore(storage);
     const oldLastActiveAt = FIXED_NOW - 73 * HOUR;
     await storage.local.set({ lastActiveAt: oldLastActiveAt });
     tabs.tabs = [makeTab({ id: 1, active: true, url: "https://example.com/restored" })];
     sessions.values.set(1, { trackId: "restored-1", keepOpen: true });
 
-    // Capture, at every badge-text update, whatever `trackedTabs` already holds in storage at
-    // that instant -- an outcome-based way to show reconciliation landed before a badge update,
-    // with no spy on any Sluice function.
-    const trackedTabsAtEachBadgeUpdate: unknown[] = [];
+    // Capture, at every badge-text update, whatever `trackedTabs` already holds (read through a
+    // second store instance over the same storage) at that instant -- an outcome-based way to
+    // show reconciliation landed before a badge update, with no spy on any Sluice function.
+    const readStore = createStore(storage);
+    const trackedTabsAtEachBadgeUpdate: ReturnType<typeof readStore.getTrackedTabs>[] = [];
     const setBadgeText = api.action.setBadgeText;
     api.action.setBadgeText = (details) => {
-      trackedTabsAtEachBadgeUpdate.push(storage.peek("trackedTabs"));
+      trackedTabsAtEachBadgeUpdate.push(readStore.getTrackedTabs());
       return setBadgeText(details);
     };
 
@@ -497,22 +502,19 @@ describe("start", () => {
     await flush();
 
     // recordAwayGap ran against the stale lastActiveAt, not one already bumped by the tick.
-    const gap = storage.peek("awayGap") as { start: number };
-    expect(gap.start).toBe(oldLastActiveAt);
+    const gap = await store.getAwayGap();
+    expect(gap?.start).toBe(oldLastActiveAt);
 
     // reconcileTabs restored the tab's keepOpen from its sessions value.
-    const tracked = storage.peek("trackedTabs") as Array<{
-      tabId: number;
-      trackId: string;
-      keepOpen: boolean;
-    }>;
+    const tracked = await store.getTrackedTabs();
     expect(tracked).toEqual([expect.objectContaining({ tabId: 1, trackId: "restored-1", keepOpen: true })]);
 
     // The tick ran too, and by the time its (last) badge update fired, trackedTabs already
     // carried the reconciled, keepOpen-restored record -- reconciliation finished first.
     expect(badgeTexts.at(-1)).toBe("");
-    expect(trackedTabsAtEachBadgeUpdate.length).toBeGreaterThan(0);
-    expect(trackedTabsAtEachBadgeUpdate.at(-1)).toEqual([
+    const resolvedSnapshots = await Promise.all(trackedTabsAtEachBadgeUpdate);
+    expect(resolvedSnapshots.length).toBeGreaterThan(0);
+    expect(resolvedSnapshots.at(-1)).toEqual([
       expect.objectContaining({ tabId: 1, trackId: "restored-1", keepOpen: true }),
     ]);
   });
@@ -522,6 +524,7 @@ describe("start", () => {
     const storage = new FakeStorage();
     const alarms = new FakeAlarms();
     const { api } = makeApi(storage, alarms);
+    const store = createStore(storage);
     const oldLastActiveAt = FIXED_NOW - 73 * HOUR;
     await storage.local.set({ lastActiveAt: oldLastActiveAt });
 
@@ -531,7 +534,7 @@ describe("start", () => {
     alarms.onAlarm.fire({ name: "sluice-tick", scheduledTime: 0 });
     await flush();
 
-    expect(storage.peek("awayGap")).toBeUndefined();
+    expect(await store.getAwayGap()).toBeNull();
   });
 
   test("firing onInstalled records no gap", async () => {
@@ -539,6 +542,7 @@ describe("start", () => {
     const storage = new FakeStorage();
     const alarms = new FakeAlarms();
     const { api, onInstalled } = makeApi(storage, alarms);
+    const store = createStore(storage);
     const oldLastActiveAt = FIXED_NOW - 73 * HOUR;
     await storage.local.set({ lastActiveAt: oldLastActiveAt });
 
@@ -546,13 +550,14 @@ describe("start", () => {
     onInstalled.fire({ reason: "install", temporary: false });
     await flush();
 
-    expect(storage.peek("awayGap")).toBeUndefined();
+    expect(await store.getAwayGap()).toBeNull();
   });
 
   test("firing history.onVisited with a queued URL sets that item's lastVisitedAt", async () => {
     const storage = new FakeStorage();
     const alarms = new FakeAlarms();
     const { api, onVisited } = makeApi(storage, alarms);
+    const store = createStore(storage);
 
     // Seed a queued item directly in storage, the same way `store.addItem` would.
     await storage.local.set({
@@ -576,7 +581,7 @@ describe("start", () => {
     onVisited.fire({ id: "1", url: "https://example.com/" });
     await flush();
 
-    const items = storage.peek("items") as Array<{ lastVisitedAt: number | null }>;
+    const items = await store.getItems();
     expect(items[0]!.lastVisitedAt).not.toBeNull();
   });
 
@@ -720,7 +725,7 @@ describe("start", () => {
 
     expect(tabs.removed).toEqual([[2, 3]]);
 
-    const closed = storage.peek("recentlyClosed") as Array<{ url: string }>;
+    const closed = await otherStore.getRecentlyClosed();
     expect(closed.some((entry) => entry.url === "https://example.com/unqueued")).toBe(true);
     expect(closed.some((entry) => entry.url === "https://example.com/queued")).toBe(false);
   });
@@ -729,6 +734,7 @@ describe("start", () => {
     const storage = new FakeStorage();
     const alarms = new FakeAlarms();
     const { api, tabs } = makeApi(storage, alarms);
+    const store = createStore(storage);
 
     start(api);
     await flush();
@@ -737,23 +743,23 @@ describe("start", () => {
     tabs.onCreated.fire(makeTab({ id: 2, windowId: 1, active: false, url: "https://example.com/two" }));
     await flush();
 
-    let tracked = storage.peek("trackedTabs") as Array<{ tabId: number; inactiveSince: number | null }>;
+    let tracked = await store.getTrackedTabs();
     expect(tracked.find((tab) => tab.tabId === 1)?.inactiveSince).toBeNull();
     expect(tracked.find((tab) => tab.tabId === 2)?.inactiveSince).toBeTypeOf("number");
 
     tabs.onActivated.fire({ tabId: 2, windowId: 1 });
     await flush();
 
-    tracked = storage.peek("trackedTabs") as Array<{ tabId: number; inactiveSince: number | null }>;
+    tracked = await store.getTrackedTabs();
     expect(tracked.find((tab) => tab.tabId === 2)?.inactiveSince).toBeNull();
     expect(tracked.find((tab) => tab.tabId === 1)?.inactiveSince).toBeTypeOf("number");
 
     tabs.onRemoved.fire(1, { windowId: 1, isWindowClosing: false });
     await flush();
 
-    const afterRemove = storage.peek("trackedTabs") as Array<{ tabId: number }>;
+    const afterRemove = await store.getTrackedTabs();
     expect(afterRemove.some((tab) => tab.tabId === 1)).toBe(false);
-    const closed = storage.peek("recentlyClosed") as Array<{ url: string }>;
+    const closed = await store.getRecentlyClosed();
     expect(closed.some((entry) => entry.url === "https://example.com/one")).toBe(true);
   });
 
@@ -762,6 +768,7 @@ describe("start", () => {
     const storage = new FakeStorage();
     const alarms = new FakeAlarms();
     const { api, tabs } = makeApi(storage, alarms);
+    const store = createStore(storage);
     const whenNow = FIXED_NOW;
     await storage.local.set({
       trackedTabs: [
@@ -818,10 +825,10 @@ describe("start", () => {
 
     expect(tabs.removed).toEqual([[1]]);
 
-    const tracked = storage.peek("trackedTabs") as Array<{ tabId: number }>;
+    const tracked = await store.getTrackedTabs();
     expect(tracked.map((tab) => tab.tabId).sort()).toEqual([2, 3]);
 
-    const closed = storage.peek("recentlyClosed") as Array<{ trackId: string }>;
+    const closed = await store.getRecentlyClosed();
     expect(closed.some((entry) => entry.trackId === "old-track")).toBe(false);
     expect(closed.some((entry) => entry.trackId === "expired")).toBe(true);
   });
@@ -882,6 +889,7 @@ describe("start", () => {
   test("starting a second time against the same storage behaves the same, with no state carried between starts", async () => {
     const storage = new FakeStorage();
     const alarms = new FakeAlarms();
+    const store = createStore(storage);
     const first = makeApi(storage, alarms);
 
     start(first.api);
@@ -901,7 +909,7 @@ describe("start", () => {
     alarms.onAlarm.fire({ name: "sluice-tick", scheduledTime: 0 });
     await flush();
 
-    expect(storage.peek("lastActiveAt")).toBeTypeOf("number");
+    expect(await store.getLastActiveAt()).toBeTypeOf("number");
     expect(second.badgeTexts.at(-1)).toBe("");
 
     // Storage changes supply their previous values: a tab
@@ -910,7 +918,7 @@ describe("start", () => {
     second.tabs.onCreated.fire(makeTab({ id: 1, windowId: 1, active: true, url: "https://example.com/" }));
     await flush();
 
-    const tracked = storage.peek("trackedTabs") as Array<{ tabId: number }>;
+    const tracked = await store.getTrackedTabs();
     expect(tracked.some((tab) => tab.tabId === 1)).toBe(true);
     expect(second.sessions.setCalls.some((call) => call.tabId === 1)).toBe(true);
   });

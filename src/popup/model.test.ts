@@ -8,7 +8,11 @@ import type { Tab } from "./model";
 
 type Listener = (changes: Record<string, StorageChange>, areaName: string) => void;
 
-/** An in-memory fake of `storage.local` and `storage.onChanged`, local to this test file. */
+/**
+ * An in-memory fake of `storage.local` and `storage.onChanged`, local to this test file.
+ * Leaves real storage serialization and quota limits, and Firefox's actual `onChanged`
+ * event timing, unverified.
+ */
 class FakeStorage implements StorageNamespace {
   private data: Record<string, unknown> = {};
   private listeners: Listener[] = [];
@@ -210,7 +214,7 @@ describe("popupState", () => {
     expect(state.kind).toBe("queued");
   });
 
-  test("defaultBucketId is lastBucketId when that bucket exists", () => {
+  test("the add state's default bucket is the last-used bucket when it still exists", () => {
     const tab: Tab = { url: "https://example.com/new", title: "New page" };
     const state = popupState({
       tab,
@@ -226,7 +230,7 @@ describe("popupState", () => {
     expect(state.defaultBucketId).toBe("b-side");
   });
 
-  test("defaultBucketId falls back to the lowest-order bucket when none was ever recorded", () => {
+  test("the add state's default bucket is the lowest-order bucket when none was ever recorded", () => {
     const tab: Tab = { url: "https://example.com/new", title: "New page" };
     const state = popupState({
       tab,
@@ -242,7 +246,7 @@ describe("popupState", () => {
     expect(state.defaultBucketId).toBe("b-dagger");
   });
 
-  test("defaultBucketId falls back to the lowest-order bucket when the stored one was deleted", () => {
+  test("the add state's default bucket falls back to the lowest-order bucket when the stored one was deleted", () => {
     const tab: Tab = { url: "https://example.com/new", title: "New page" };
     const state = popupState({
       tab,
@@ -407,7 +411,7 @@ describe("popupState", () => {
 
 describe("saveTab", () => {
   test("stores the item with the tab's url, title and favicon, the chosen bucket and riffle, and lastBucketId", async () => {
-    const { storage, store } = createTestStore();
+    const { store } = createTestStore();
     const seeded = await store.getBuckets();
     const bucketId = seeded[0]!.id;
     const tab: Tab = {
@@ -423,18 +427,18 @@ describe("saveTab", () => {
     expect(item.favIconUrl).toBe(tab.favIconUrl);
     expect(item.bucketId).toBe(bucketId);
     expect(item.riffle).toBe("1w");
-    expect(storage.peek("lastBucketId")).toBe(bucketId);
+    expect(await store.getLastBucketId()).toBe(bucketId);
   });
 });
 
 describe("move", () => {
   test("changes the riffle", async () => {
     const { store } = createTestStore();
-    await store.getBuckets();
+    const bucketId = (await store.getBuckets())[0]!.id;
     const item = await saveTab(
       store,
       { url: "https://example.com/post", title: "A post" },
-      (await store.getBuckets())[0]!.id,
+      bucketId,
       "72h",
     );
 
@@ -471,23 +475,23 @@ describe("resolve", () => {
 });
 
 describe("pause", () => {
-  test("with no end stores { start: now, end: null }", async () => {
-    const { storage, clock, store } = createTestStore();
+  test("with no end stores a running pause starting now", async () => {
+    const { clock, store } = createTestStore();
 
     const result = await pause(store, null, clock.now());
 
     expect(result.ok).toBe(true);
-    expect(storage.peek("pauses")).toEqual([{ id: "id-0", start: clock.now(), end: null }]);
+    expect(await store.getPauses()).toEqual([{ id: "id-0", start: clock.now(), end: null }]);
   });
 
-  test("with a future end stores that end", async () => {
-    const { storage, clock, store } = createTestStore();
+  test("with a future end stores a pause scheduled to end then", async () => {
+    const { clock, store } = createTestStore();
     const end = clock.now() + 1000;
 
     const result = await pause(store, end, clock.now());
 
     expect(result.ok).toBe(true);
-    expect(storage.peek("pauses")).toEqual([{ id: "id-0", start: clock.now(), end }]);
+    expect(await store.getPauses()).toEqual([{ id: "id-0", start: clock.now(), end }]);
   });
 
   test("with an end at now returns an error and leaves stored pauses unchanged", async () => {
@@ -522,7 +526,7 @@ describe("resumePause", () => {
 });
 
 describe("setKeepOpen", () => {
-  test("is a pass-through to store.setKeepOpen", async () => {
+  test("marks a tracked tab keep-open, persisted through the store's tracked tabs", async () => {
     const { store } = createTestStore();
     await store.trackTab(makeTrackedTab({ tabId: 1, keepOpen: false }));
 
@@ -533,7 +537,7 @@ describe("setKeepOpen", () => {
     expect(tab!.keepOpen).toBe(true);
   });
 
-  test("rejects for an unknown tab id, matching store.setKeepOpen", async () => {
+  test("rejects for an untracked tab id", async () => {
     const { store } = createTestStore();
 
     await expect(setKeepOpen(store, 999, true)).rejects.toBeDefined();

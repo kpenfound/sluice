@@ -9,7 +9,11 @@ import { HOUR } from "../lib/model";
 
 type Listener = (changes: Record<string, StorageChange>, areaName: string) => void;
 
-/** An in-memory fake of `storage.local` and `storage.onChanged`, local to this test file. */
+/**
+ * An in-memory fake of `storage.local` and `storage.onChanged`, local to this test file.
+ * Leaves unverified: real `storage.local`'s serialization, quota limits and persistence
+ * across a process restart.
+ */
 class FakeStorage implements StorageNamespace {
   private data: Record<string, unknown> = {};
   private listeners: Listener[] = [];
@@ -48,7 +52,12 @@ class FakeStorage implements StorageNamespace {
   }
 }
 
-/** A fake of the `browser.tabs` members `tabsync.ts` calls. */
+/**
+ * A fake of the `browser.tabs` members `tabsync.ts` calls.
+ * Leaves unverified: `remove` here just records the ids and does not fire any `onRemoved`
+ * event the way a real tab close would — the resulting "Recently closed" entry, which
+ * `tabsync.ts` relies on `onRemoved` to produce, is not exercised by this file.
+ */
 class FakeTabs {
   tabs: browser.tabs.Tab[] = [];
   removed: number[][] = [];
@@ -63,7 +72,12 @@ class FakeTabs {
   };
 }
 
-/** A fake of the `browser.sessions` members `tabsync.ts` calls. */
+/**
+ * A fake of the `browser.sessions` members `tabsync.ts` calls.
+ * Leaves unverified: real `sessions.setTabValue`/`getTabValue` persistence across an
+ * actual browser restart, and any serialization or quota limits Firefox enforces on a
+ * session value.
+ */
 class FakeSessions {
   values = new Map<number, unknown>();
   rejectSetFor = new Set<number>();

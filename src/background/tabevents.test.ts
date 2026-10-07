@@ -7,7 +7,11 @@ import type { TabEventDeps } from "./tabevents";
 
 type Listener = (changes: Record<string, StorageChange>, areaName: string) => void;
 
-/** An in-memory fake of `storage.local` and `storage.onChanged`, local to this test file. */
+/**
+ * An in-memory fake of `storage.local` and `storage.onChanged`, local to this test file.
+ * Leaves unverified: real `storage.local`'s serialization, quota limits and persistence
+ * across a process restart.
+ */
 class FakeStorage implements StorageNamespace {
   private data: Record<string, unknown> = {};
   private listeners: Listener[] = [];
@@ -63,7 +67,12 @@ function makeIds(prefix = "id") {
   return (): string => `${prefix}-${counter++}`;
 }
 
-/** A fake `browser.sessions` namespace, holding a per-tab `sluice` value map. */
+/**
+ * A fake `browser.sessions` namespace, holding a per-tab `sluice` value map.
+ * Leaves unverified: it implements only `getTabValue` (the one member `TabEventDeps`
+ * needs), never persists a value itself, and holds no real Firefox session data across
+ * a browser restart.
+ */
 function makeSessions(values: Record<number, unknown> = {}): TabEventDeps["sessions"] {
   return {
     getTabValue: (tabId: number, key: string) =>
@@ -185,7 +194,7 @@ describe("handleActivated", () => {
 });
 
 describe("handleUpdated", () => {
-  test("forwards url, title and favIconUrl changes to the store", async () => {
+  test("updates the tracked tab's url, title and favIconUrl", async () => {
     const { store, deps } = createDeps();
     await handleCreated(deps, makeTab({ id: 1 }));
 

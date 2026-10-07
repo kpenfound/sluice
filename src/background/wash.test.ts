@@ -6,7 +6,11 @@ import type { WashDeps } from "./wash";
 
 type Listener = (changes: Record<string, StorageChange>, areaName: string) => void;
 
-/** An in-memory fake of `storage.local` and `storage.onChanged`, local to this test file. */
+/**
+ * An in-memory fake of `storage.local` and `storage.onChanged`, local to this test file.
+ * Leaves unverified: real `storage.local`'s serialization, quota limits and persistence
+ * across a process restart.
+ */
 class FakeStorage implements StorageNamespace {
   private data: Record<string, unknown> = {};
   private listeners: Listener[] = [];
@@ -41,7 +45,12 @@ class FakeStorage implements StorageNamespace {
   };
 }
 
-/** A fake of the `browser.tabs` members `wash.ts` calls. */
+/**
+ * A fake of the `browser.tabs` members `wash.ts` calls.
+ * Leaves unverified: `create`/`update`/`remove` here resolve synchronously and never fire
+ * an `onRemoved`/`onCreated`/`onUpdated` event the way a real tab change would, and ids
+ * are assigned as a simple incrementing counter rather than Firefox's own id allocation.
+ */
 class FakeTabs {
   tabs: browser.tabs.Tab[] = [];
   removed: number[][] = [];

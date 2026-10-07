@@ -56,15 +56,15 @@ function makeItem(overrides: Partial<Item> = {}): Item {
 }
 
 describe("constants", () => {
-  test("WASH_COMMAND", () => {
+  test('WASH_COMMAND is "wash"', () => {
     expect(WASH_COMMAND).toBe("wash");
   });
 
-  test("WASH_PAGE", () => {
+  test('WASH_PAGE is "newtab.html?wash=1"', () => {
     expect(WASH_PAGE).toBe("newtab.html?wash=1");
   });
 
-  test("WASH_MESSAGE_TYPE", () => {
+  test('WASH_MESSAGE_TYPE is "sluice-wash"', () => {
     expect(WASH_MESSAGE_TYPE).toBe("sluice-wash");
   });
 });

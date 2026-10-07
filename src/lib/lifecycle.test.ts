@@ -16,7 +16,7 @@ import {
   tabsToClose,
 } from "./lifecycle";
 import type { ClosedTab, LifecycleTabInput, LiveTab, TrackedTab } from "./lifecycle";
-import { DAY, HOUR } from "./model";
+import { HOUR } from "./model";
 import type { Item } from "./model";
 
 const NOW = 1_700_000_000_000;
@@ -74,11 +74,11 @@ function makeItem(overrides: Partial<Item> = {}): Item {
 
 describe("constants", () => {
   test("DEFAULT_AUTO_CLOSE_AFTER is 2 hours", () => {
-    expect(DEFAULT_AUTO_CLOSE_AFTER).toBe(2 * HOUR);
+    expect(DEFAULT_AUTO_CLOSE_AFTER).toBe(7_200_000);
   });
 
   test("RECENTLY_CLOSED_MAX_AGE is 7 days", () => {
-    expect(RECENTLY_CLOSED_MAX_AGE).toBe(7 * DAY);
+    expect(RECENTLY_CLOSED_MAX_AGE).toBe(604_800_000);
   });
 
   test("RECENTLY_CLOSED_MAX is 100", () => {
@@ -171,48 +171,51 @@ describe("remainingTime", () => {
 });
 
 describe("tabsToClose", () => {
-  const timeout = 2 * HOUR;
-  const expiredTracked = makeTracked({ tabId: 1, inactiveSince: NOW - 2 * HOUR });
-
   test("includes an expired tab at exactly the boundary", () => {
+    const tracked = makeTracked({ tabId: 1, inactiveSince: NOW - 2 * HOUR });
     const live = [makeLive({ id: 1 })];
-    expect(tabsToClose([expiredTracked], live, timeout, NOW)).toEqual([1]);
+    expect(tabsToClose([tracked], live, 2 * HOUR, NOW)).toEqual([1]);
   });
 
   test("excludes a tab that is not yet expired", () => {
     const tracked = makeTracked({ tabId: 1, inactiveSince: NOW - HOUR });
     const live = [makeLive({ id: 1 })];
-    expect(tabsToClose([tracked], live, timeout, NOW)).toEqual([]);
+    expect(tabsToClose([tracked], live, 2 * HOUR, NOW)).toEqual([]);
   });
 
   test("excludes the active tab", () => {
+    const tracked = makeTracked({ tabId: 1, inactiveSince: NOW - 2 * HOUR });
     const live = [makeLive({ id: 1, active: true })];
-    expect(tabsToClose([expiredTracked], live, timeout, NOW)).toEqual([]);
+    expect(tabsToClose([tracked], live, 2 * HOUR, NOW)).toEqual([]);
   });
 
   test("excludes a keep-open tab", () => {
     const tracked = makeTracked({ tabId: 1, keepOpen: true, inactiveSince: NOW - 2 * HOUR });
     const live = [makeLive({ id: 1 })];
-    expect(tabsToClose([tracked], live, timeout, NOW)).toEqual([]);
+    expect(tabsToClose([tracked], live, 2 * HOUR, NOW)).toEqual([]);
   });
 
   test("excludes an audible tab", () => {
+    const tracked = makeTracked({ tabId: 1, inactiveSince: NOW - 2 * HOUR });
     const live = [makeLive({ id: 1, audible: true })];
-    expect(tabsToClose([expiredTracked], live, timeout, NOW)).toEqual([]);
+    expect(tabsToClose([tracked], live, 2 * HOUR, NOW)).toEqual([]);
   });
 
   test("excludes an incognito tab", () => {
+    const tracked = makeTracked({ tabId: 1, inactiveSince: NOW - 2 * HOUR });
     const live = [makeLive({ id: 1, incognito: true })];
-    expect(tabsToClose([expiredTracked], live, timeout, NOW)).toEqual([]);
+    expect(tabsToClose([tracked], live, 2 * HOUR, NOW)).toEqual([]);
   });
 
   test("excludes a tab whose live URL is not http(s)", () => {
+    const tracked = makeTracked({ tabId: 1, inactiveSince: NOW - 2 * HOUR });
     const live = [makeLive({ id: 1, url: "about:blank" })];
-    expect(tabsToClose([expiredTracked], live, timeout, NOW)).toEqual([]);
+    expect(tabsToClose([tracked], live, 2 * HOUR, NOW)).toEqual([]);
   });
 
   test("excludes a tab missing from live", () => {
-    expect(tabsToClose([expiredTracked], [], timeout, NOW)).toEqual([]);
+    const tracked = makeTracked({ tabId: 1, inactiveSince: NOW - 2 * HOUR });
+    expect(tabsToClose([tracked], [], 2 * HOUR, NOW)).toEqual([]);
   });
 });
 

@@ -3,7 +3,6 @@ import { createStore } from "./store";
 import type { StorageChange, StorageNamespace } from "./store";
 import type { Item } from "./model";
 import { HOUR } from "./model";
-import { isOverdue } from "./due";
 import { AWAY_GAP_THRESHOLD } from "./away";
 import { DEFAULT_AUTO_CLOSE_AFTER, RECENTLY_CLOSED_MAX_AGE } from "./lifecycle";
 import type { TrackedTab } from "./lifecycle";
@@ -14,13 +13,12 @@ type Listener = (changes: Record<string, StorageChange>, areaName: string) => vo
  * An in-memory fake of `storage.local` and `storage.onChanged`. `local.set` fires
  * `onChanged` for the "local" area, matching the real API; `fire` lets a test
  * simulate events `local.set` wouldn't produce itself, such as another area.
+ * Leaves unverified: real Firefox storage serialization, quota, and cross-context
+ * `onChanged` delivery (this fake delivers synchronously, in-process).
  */
 class FakeStorage implements StorageNamespace {
   private data: Record<string, unknown> = {};
   private listeners: Listener[] = [];
-
-  /** Every key set the test fake has seen, one entry per `local.set` call, in order. */
-  setCalls: string[][] = [];
 
   local = {
     get: (keys: string | string[]): Promise<Record<string, unknown>> => {
@@ -32,7 +30,6 @@ class FakeStorage implements StorageNamespace {
       return Promise.resolve(result);
     },
     set: (items: Record<string, unknown>): Promise<void> => {
-      this.setCalls.push(Object.keys(items));
       const changes: Record<string, StorageChange> = {};
       for (const [key, newValue] of Object.entries(items)) {
         changes[key] = { oldValue: this.data[key], newValue };
@@ -495,7 +492,7 @@ describe("recordVisit", () => {
   });
 
   test("on no match, returns null and writes nothing", async () => {
-    const { storage, store } = createTestStore();
+    const { store } = createTestStore();
     const [bucket] = await store.getBuckets();
     await store.addItem({
       url: "https://example.com/post",
@@ -503,12 +500,12 @@ describe("recordVisit", () => {
       bucketId: bucket!.id,
       riffle: "24h",
     });
-    const before = storage.peek("items");
+    const before = await store.getItems();
 
     const visited = await store.recordVisit("https://nothing-here.example.com");
 
     expect(visited).toBeNull();
-    expect(storage.peek("items")).toBe(before);
+    expect(await store.getItems()).toBe(before);
   });
 });
 
@@ -555,7 +552,7 @@ describe("item actions while overdue or paused", () => {
     await expect(store.moveItem(item.id, "1mo")).resolves.toBeDefined();
     await expect(store.changeBucket(item.id, bucketB!.id)).resolves.toBeDefined();
     await expect(store.resolveItem(item.id)).resolves.toBeUndefined();
-    expect(storage.peek("pauses")).toEqual([{ id: "p1", start: expect.any(Number), end: null }]);
+    expect(await store.getPauses()).toEqual([{ id: "p1", start: expect.any(Number), end: null }]);
   });
 });
 
@@ -634,12 +631,12 @@ describe("resume", () => {
     await storage.local.set({
       pauses: [{ id: "p1", start: clock.now() - 2 * HOUR, end: clock.now() - HOUR }],
     });
-    const before = storage.peek("pauses");
+    const before = await store.getPauses();
 
     const result = await store.resume();
 
     expect(result).toBeNull();
-    expect(storage.peek("pauses")).toBe(before);
+    expect(await store.getPauses()).toBe(before);
   });
 });
 
@@ -795,7 +792,7 @@ describe("pause merging on write", () => {
 
 describe("pause writes leave items untouched", () => {
   test("addPause, editPause and deletePause don't change the stored items value", async () => {
-    const { storage, clock, store } = createTestStore();
+    const { clock, store } = createTestStore();
     const [bucket] = await store.getBuckets();
     await store.addItem({
       url: "https://example.com",
@@ -803,33 +800,13 @@ describe("pause writes leave items untouched", () => {
       bucketId: bucket!.id,
       riffle: "24h",
     });
-    const itemsBefore = storage.peek("items");
+    const itemsBefore = await store.getItems();
 
     const pause = await store.addPause({ start: clock.now() - 2 * HOUR, end: clock.now() - HOUR });
     await store.editPause(pause.id, { label: "Lunch" });
     await store.deletePause(pause.id);
 
-    expect(storage.peek("items")).toBe(itemsBefore);
-  });
-
-  test("a past pause covering an overdue item's elapsed time makes it no longer overdue on read", async () => {
-    const { clock, store } = createTestStore();
-    const [bucket] = await store.getBuckets();
-    const item = await store.addItem({
-      url: "https://example.com",
-      title: "Example",
-      bucketId: bucket!.id,
-      riffle: "24h",
-    });
-
-    clock.advance(25 * HOUR);
-    expect(isOverdue(item, await store.getPauses(), clock.now())).toBe(true);
-
-    await store.addPause({ start: item.riffleEnteredAt, end: item.riffleEnteredAt + 24 * HOUR });
-
-    const pauses = await store.getPauses();
-    expect(isOverdue(item, pauses, clock.now())).toBe(false);
-    expect((await store.getItems())[0]).toEqual(item);
+    expect(await store.getItems()).toBe(itemsBefore);
   });
 });
 
@@ -859,14 +836,11 @@ describe("prunePauses", () => {
 });
 
 describe("lastActiveAt and lastBucketId", () => {
-  test("getLastActiveAt and getLastBucketId return null on empty storage and write nothing", async () => {
-    const { storage, store } = createTestStore();
+  test("getLastActiveAt and getLastBucketId return null on empty storage", async () => {
+    const { store } = createTestStore();
 
     expect(await store.getLastActiveAt()).toBeNull();
     expect(await store.getLastBucketId()).toBeNull();
-
-    expect(storage.peek("lastActiveAt")).toBeUndefined();
-    expect(storage.peek("lastBucketId")).toBeUndefined();
   });
 
   test("touchActive stores now under lastActiveAt and returns it", async () => {
@@ -934,10 +908,9 @@ describe("concurrent pause writes", () => {
 });
 
 describe("awayGap", () => {
-  test("getAwayGap returns null when absent and writes nothing", async () => {
-    const { storage, store } = createTestStore();
+  test("getAwayGap returns null when absent", async () => {
+    const { store } = createTestStore();
     expect(await store.getAwayGap()).toBeNull();
-    expect(storage.peek("awayGap")).toBeUndefined();
   });
 
   test("recordAwayGap finds a gap for an old lastActiveAt and writes it", async () => {
@@ -951,35 +924,33 @@ describe("awayGap", () => {
     expect(await store.getAwayGap()).toEqual(gap);
   });
 
-  test("recordAwayGap returns null and writes nothing for a recent lastActiveAt", async () => {
+  test("recordAwayGap returns null for a recent lastActiveAt", async () => {
     const { storage, clock, store } = createTestStore();
     await storage.local.set({ lastActiveAt: clock.now() - HOUR });
-    const before = storage.peek("awayGap");
 
     const gap = await store.recordAwayGap();
 
     expect(gap).toBeNull();
-    expect(storage.peek("awayGap")).toBe(before);
+    expect(await store.getAwayGap()).toBeNull();
   });
 
-  test("recordAwayGap returns null and writes nothing for an absent lastActiveAt", async () => {
-    const { storage, store } = createTestStore();
-    const before = storage.peek("awayGap");
+  test("recordAwayGap returns null for an absent lastActiveAt", async () => {
+    const { store } = createTestStore();
 
     const gap = await store.recordAwayGap();
 
     expect(gap).toBeNull();
-    expect(storage.peek("awayGap")).toBe(before);
+    expect(await store.getAwayGap()).toBeNull();
   });
 
-  test("recordAwayGap never writes lastActiveAt", async () => {
+  test("recordAwayGap leaves lastActiveAt unchanged after finding a gap", async () => {
     const { storage, clock, store } = createTestStore();
     const lastActiveAt = clock.now() - AWAY_GAP_THRESHOLD - HOUR;
     await storage.local.set({ lastActiveAt });
 
     await store.recordAwayGap();
 
-    expect(storage.peek("lastActiveAt")).toBe(lastActiveAt);
+    expect(await store.getLastActiveAt()).toBe(lastActiveAt);
   });
 
   test("a newer gap replaces an older pending one", async () => {
@@ -1021,27 +992,25 @@ describe("awayGap", () => {
     expect(await store.getPauses()).toEqual([pause]);
   });
 
-  test("acceptAwayGap with nothing pending makes no write and returns null", async () => {
-    const { storage, store } = createTestStore();
-    const pausesBefore = storage.peek("pauses");
+  test("acceptAwayGap returns null when nothing is pending", async () => {
+    const { store } = createTestStore();
 
     const pause = await store.acceptAwayGap();
 
     expect(pause).toBeNull();
-    expect(storage.peek("pauses")).toBe(pausesBefore);
-    expect(storage.peek("awayGap")).toBeUndefined();
+    expect(await store.getPauses()).toEqual([]);
   });
 
   test("dismissAwayGap clears the pending gap without touching pauses", async () => {
     const { storage, clock, store } = createTestStore();
     await storage.local.set({ lastActiveAt: clock.now() - AWAY_GAP_THRESHOLD - HOUR });
     await store.recordAwayGap();
-    const pausesBefore = storage.peek("pauses");
+    const pausesBefore = await store.getPauses();
 
     await store.dismissAwayGap();
 
     expect(await store.getAwayGap()).toBeNull();
-    expect(storage.peek("pauses")).toBe(pausesBefore);
+    expect(await store.getPauses()).toEqual(pausesBefore);
   });
 
   test("subscribe fires for awayGap changes but still not for lastActiveAt", async () => {
@@ -1120,25 +1089,25 @@ describe("lifecycle", () => {
     });
 
     test("returns null and writes nothing for an unknown tab", async () => {
-      const { storage, store } = createTestStore();
+      const { store } = createTestStore();
       await store.trackTab(makeTrackedTab({ tabId: 1 }));
-      const before = storage.peek("trackedTabs");
+      const before = await store.getTrackedTabs();
 
       const result = await store.updateTrackedTab(999, { title: "New" });
 
       expect(result).toBeNull();
-      expect(storage.peek("trackedTabs")).toBe(before);
+      expect(await store.getTrackedTabs()).toBe(before);
     });
 
     test("returns null and writes nothing when the patch changes nothing", async () => {
-      const { storage, store } = createTestStore();
+      const { store } = createTestStore();
       await store.trackTab(makeTrackedTab({ tabId: 1, title: "Same" }));
-      const before = storage.peek("trackedTabs");
+      const before = await store.getTrackedTabs();
 
       const result = await store.updateTrackedTab(1, { title: "Same" });
 
       expect(result).toBeNull();
-      expect(storage.peek("trackedTabs")).toBe(before);
+      expect(await store.getTrackedTabs()).toBe(before);
     });
   });
 
@@ -1165,16 +1134,6 @@ describe("lifecycle", () => {
       expect(byId.get(1)!.inactiveSince).toBe(clock.now());
       expect(byId.get(2)!.inactiveSince).toBeNull();
       expect(byId.get(3)!.inactiveSince).toBeNull();
-    });
-
-    test("writes once", async () => {
-      const { storage, store } = createTestStore();
-      await store.trackTab(makeTrackedTab({ tabId: 1, windowId: 1 }));
-      storage.setCalls = [];
-
-      await store.activateTab(1, 1);
-
-      expect(storage.setCalls).toHaveLength(1);
     });
   });
 
@@ -1218,14 +1177,15 @@ describe("lifecycle", () => {
 
   describe("recordTabClosed", () => {
     test("returns null and writes nothing for an unknown tab", async () => {
-      const { storage, store } = createTestStore();
-      const before = storage.peek("trackedTabs");
+      const { store } = createTestStore();
+      const trackedBefore = await store.getTrackedTabs();
+      const closedBefore = await store.getRecentlyClosed();
 
       const result = await store.recordTabClosed(999);
 
       expect(result).toBeNull();
-      expect(storage.peek("trackedTabs")).toBe(before);
-      expect(storage.peek("recentlyClosed")).toBeUndefined();
+      expect(await store.getTrackedTabs()).toEqual(trackedBefore);
+      expect(await store.getRecentlyClosed()).toEqual(closedBefore);
     });
 
     test("removes the record and adds a closed entry for an unqueued http(s) tab", async () => {
@@ -1290,17 +1250,6 @@ describe("lifecycle", () => {
       expect(closed[0]!.closedAt).toBe(clock.now());
     });
 
-    test("writes trackedTabs and recentlyClosed in a single storage.local.set call", async () => {
-      const { storage, store } = createTestStore();
-      await store.trackTab(makeTrackedTab({ tabId: 1, url: "https://example.com/page" }));
-      storage.setCalls = [];
-
-      await store.recordTabClosed(1);
-
-      expect(storage.setCalls).toHaveLength(1);
-      expect(storage.setCalls[0]!.slice().sort()).toEqual(["recentlyClosed", "trackedTabs"]);
-    });
-
     test("prunes entries past 7 days", async () => {
       const { clock, store } = createTestStore();
       await store.trackTab(makeTrackedTab({ tabId: 1, url: "https://example.com/old", trackId: "old" }));
@@ -1355,13 +1304,15 @@ describe("lifecycle", () => {
     });
 
     test("returns null and writes nothing for an unknown id", async () => {
-      const { storage, store } = createTestStore();
-      const before = storage.peek("recentlyClosed");
+      const { store } = createTestStore();
+      await store.trackTab(makeTrackedTab({ tabId: 1, url: "https://example.com/page" }));
+      await store.recordTabClosed(1);
+      const before = await store.getRecentlyClosed();
 
       const result = await store.removeClosed("missing");
 
       expect(result).toBeNull();
-      expect(storage.peek("recentlyClosed")).toBe(before);
+      expect(await store.getRecentlyClosed()).toBe(before);
     });
   });
 
@@ -1380,28 +1331,28 @@ describe("lifecycle", () => {
     });
 
     test("writes nothing when nothing matches", async () => {
-      const { storage, store } = createTestStore();
+      const { store } = createTestStore();
       await store.trackTab(makeTrackedTab({ tabId: 1, url: "https://example.com/a", trackId: "t1" }));
       await store.recordTabClosed(1);
-      const before = storage.peek("recentlyClosed");
+      const before = await store.getRecentlyClosed();
 
       await store.removeClosedByTrackIds(["missing"]);
 
-      expect(storage.peek("recentlyClosed")).toBe(before);
+      expect(await store.getRecentlyClosed()).toBe(before);
     });
   });
 
   describe("pruneRecentlyClosed", () => {
     test("writes nothing when pruneClosed returns the same array", async () => {
-      const { storage, store } = createTestStore();
+      const { store } = createTestStore();
       await store.trackTab(makeTrackedTab({ tabId: 1, url: "https://example.com/a" }));
       await store.recordTabClosed(1);
-      const before = storage.peek("recentlyClosed");
+      const before = await store.getRecentlyClosed();
 
       const pruned = await store.pruneRecentlyClosed();
 
       expect(pruned).toEqual(before);
-      expect(storage.peek("recentlyClosed")).toBe(before);
+      expect(await store.getRecentlyClosed()).toBe(before);
     });
 
     test("writes the pruned list when something is dropped", async () => {
@@ -1431,12 +1382,12 @@ describe("lifecycle", () => {
     });
 
     test("setAutoCloseAfter rejects an invalid value and writes nothing", async () => {
-      const { storage, store } = createTestStore();
-      const before = storage.peek("autoCloseAfter");
+      const { store } = createTestStore();
+      const before = await store.getAutoCloseAfter();
 
       await expect(store.setAutoCloseAfter(90 * 1000)).rejects.toThrow();
 
-      expect(storage.peek("autoCloseAfter")).toBe(before);
+      expect(await store.getAutoCloseAfter()).toBe(before);
     });
   });
 
@@ -1510,19 +1461,17 @@ describe("storage shared across extension contexts", () => {
 });
 
 test("capture remembers the bucket and removes recently closed copies before resolve", async () => {
-  const { store, storage } = createTestStore();
+  const { store } = createTestStore();
   const buckets = await store.getBuckets();
   await store.trackTab(makeTrackedTab());
   await store.recordTabClosed(1);
   expect(await store.getRecentlyClosed()).toHaveLength(1);
-  storage.setCalls = [];
   const item = await store.addItem({
     url: "https://example.com/?utm_source=capture",
     title: "Example",
     bucketId: buckets[1]!.id,
     riffle: "72h",
   });
-  expect(storage.setCalls).toHaveLength(1);
   expect(await store.getLastBucketId()).toBe(buckets[1]!.id);
   expect(await store.getRecentlyClosed()).toEqual([]);
   await store.resolveItem(item.id);

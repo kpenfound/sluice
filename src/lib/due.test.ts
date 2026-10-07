@@ -74,7 +74,8 @@ describe("remaining", () => {
   test("a scheduled future pause has no effect before its start", () => {
     const item = makeItem({ riffleEnteredAt: NOW - 5 * HOUR });
     const pauses = [makePause({ start: NOW + 2 * HOUR, end: NOW + 4 * HOUR })];
-    expect(remaining(item, pauses, NOW)).toBe(remaining(item, [], NOW));
+    // 5h elapsed, the pause hasn't started yet -> unaffected -> 19h remaining.
+    expect(remaining(item, pauses, NOW)).toBe(19 * HOUR);
   });
 
   test("a scheduled pause counts only once now passes its start", () => {

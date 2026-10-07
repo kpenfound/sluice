@@ -1,5 +1,45 @@
 import { describe, expect, test } from "vitest";
-import { isRiffleId, nextRiffle, RIFFLES } from "./model";
+import {
+  DAY,
+  DEFAULT_BUCKET_NAMES,
+  HOUR,
+  isRiffleId,
+  nextRiffle,
+  RIFFLES,
+  TTL,
+} from "./model";
+
+describe("HOUR and DAY", () => {
+  test("HOUR is 3,600,000ms and DAY is 24 times that", () => {
+    expect(HOUR).toBe(3_600_000);
+    expect(DAY).toBe(86_400_000);
+  });
+});
+
+describe("RIFFLES", () => {
+  test("is the fixed ladder from 24h up to 1mo, ending in the untimed stale archive", () => {
+    expect(RIFFLES).toEqual(["24h", "72h", "1w", "1mo", "stale"]);
+  });
+});
+
+describe("TTL", () => {
+  test("pins each timed riffle's time-to-live to the design's 24h/72h/7d/30d figures", () => {
+    expect(TTL["24h"]).toBe(86_400_000);
+    expect(TTL["72h"]).toBe(259_200_000);
+    expect(TTL["1w"]).toBe(604_800_000);
+    expect(TTL["1mo"]).toBe(2_592_000_000);
+  });
+
+  test("has no entry for stale, which has no TTL", () => {
+    expect(Object.keys(TTL)).not.toContain("stale");
+  });
+});
+
+describe("DEFAULT_BUCKET_NAMES", () => {
+  test("is the three fresh-install buckets Dagger, Side projects and Personal, in that order", () => {
+    expect(DEFAULT_BUCKET_NAMES).toEqual(["Dagger", "Side projects", "Personal"]);
+  });
+});
 
 describe("nextRiffle", () => {
   test("steps down the ladder one riffle at a time", () => {
@@ -11,10 +51,6 @@ describe("nextRiffle", () => {
 
   test("returns null for stale, the bottom of the ladder", () => {
     expect(nextRiffle("stale")).toBeNull();
-  });
-
-  test("covers every riffle in the ladder", () => {
-    expect(RIFFLES).toEqual(["24h", "72h", "1w", "1mo", "stale"]);
   });
 });
 

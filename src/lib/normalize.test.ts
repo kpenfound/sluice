@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { normalize, SITE_RULES } from "./normalize";
+import { normalize } from "./normalize";
 
 describe("normalize", () => {
   test("lowercases the scheme and host", () => {
@@ -38,8 +38,9 @@ describe("normalize", () => {
     expect(normalize("https://example.com/foo/")).toBe("https://example.com/foo");
   });
 
-  test("normalizes the root with and without a trailing slash to the same value", () => {
-    expect(normalize("https://example.com/")).toBe(normalize("https://example.com"));
+  test("collapses the root path, with or without a trailing slash, to no path segment", () => {
+    expect(normalize("https://example.com/")).toBe("https://example.com");
+    expect(normalize("https://example.com")).toBe("https://example.com");
   });
 
   test("leaves no dangling ? when the query becomes empty", () => {
@@ -83,15 +84,5 @@ describe("normalize", () => {
         "https://github.com/acme/widgets/tree/main/src",
       );
     });
-  });
-
-  test("SITE_RULES is an exported array containing the GitHub rule, consulted before the default rules", () => {
-    expect(Array.isArray(SITE_RULES)).toBe(true);
-    expect(SITE_RULES.length).toBeGreaterThan(0);
-
-    const url = new URL("https://github.com/acme/widgets/issues/42/files?x=1#issuecomment-123");
-    const matching = SITE_RULES.find((rule) => rule.match(url));
-    expect(matching).toBeDefined();
-    expect(matching!.normalize(url)).toBe("https://github.com/acme/widgets/issues/42");
   });
 });

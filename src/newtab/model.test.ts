@@ -248,7 +248,7 @@ describe("launcherView: search", () => {
     ];
     const view = launcherView(baseInput({ items, selectedBucketId: "b-dagger", query: "WIDGET" }));
     const column = view.columns.find((c) => c.riffle === "72h");
-    expect(column?.items.map((i) => i.id).sort()).toEqual(["title-match", "url-match"]);
+    expect(column?.items.map((i) => i.id)).toEqual(["title-match", "url-match"]);
   });
 
   test("matches include Stale, and are labelled with their bucket name", () => {
@@ -620,6 +620,19 @@ describe("triageView: rows", () => {
 
   test("excludes an audible tab", () => {
     const tabs = [makeWashTab({ id: 1, audible: true }), makeWashTab({ id: 2 })];
+    const view = triageView({
+      tabs,
+      trackedTabs: [],
+      items: [],
+      buckets,
+      lastBucketId: null,
+      selfTabId: null,
+    });
+    expect(view.rows.map((r) => r.tabId)).toEqual([2]);
+  });
+
+  test("excludes an incognito tab", () => {
+    const tabs = [makeWashTab({ id: 1, incognito: true }), makeWashTab({ id: 2 })];
     const view = triageView({
       tabs,
       trackedTabs: [],

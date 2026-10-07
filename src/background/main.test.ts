@@ -1,4 +1,4 @@
-import { describe, expect, test } from "vitest";
+import { afterEach, describe, expect, test, vi } from "vitest";
 import { start } from "./main";
 import type { BackgroundApi } from "./main";
 import { createStore } from "../lib/store";
@@ -8,7 +8,17 @@ import { WASH_COMMAND, WASH_MESSAGE_TYPE } from "../lib/wash";
 
 type Listener = (changes: Record<string, StorageChange>, areaName: string) => void;
 
-/** An in-memory fake of `storage.local` and `storage.onChanged`, local to this test file. */
+/**
+ * A fixed instant used by every clock-dependent test, via `vi.setSystemTime`, so away-gap and
+ * lastActiveAt math never races the real clock. `start(api)` takes no injectable `now`, so the
+ * clock is pinned from the test side instead.
+ */
+const FIXED_NOW = 1_700_000_000_000;
+
+/**
+ * An in-memory fake of `storage.local` and `storage.onChanged`, local to this test file. Leaves
+ * unverified: real `storage.local`'s serialization and quota behavior.
+ */
 class FakeStorage implements StorageNamespace {
   private data: Record<string, unknown> = {};
   private listeners: Listener[] = [];
@@ -51,7 +61,10 @@ class FakeStorage implements StorageNamespace {
   }
 }
 
-/** A fake `WebExtEvent`: records listeners and lets the test fire them. */
+/**
+ * A fake `WebExtEvent`: records listeners and lets the test fire them. Leaves unverified: real
+ * listener ordering and Firefox's event-page wake-up behavior.
+ */
 class FakeEvent<TCallback extends (...args: never[]) => unknown> {
   private listeners: TCallback[] = [];
 
@@ -74,7 +87,10 @@ class FakeEvent<TCallback extends (...args: never[]) => unknown> {
   }
 }
 
-/** A fake `browser.alarms`, tracking created alarms and recording `create` calls. */
+/**
+ * A fake `browser.alarms`, tracking created alarms and recording `create` calls. Leaves
+ * unverified: real OS-scheduled alarm timing -- alarms here only fire when a test calls `fire`.
+ */
 class FakeAlarms {
   private alarms = new Map<string, browser.alarms.Alarm>();
   createCalls: Array<{ name: string; alarmInfo: browser.alarms._CreateAlarmInfo }> = [];
@@ -99,7 +115,9 @@ class FakeAlarms {
  * A fake `browser.tabs`, holding the live tab set `query` returns, recording `remove` calls,
  * and exposing the five tab lifecycle events as `FakeEvent`s. `remove` mimics Firefox by
  * dropping the tab from the live set and firing `onRemoved`, since `closeExpired` relies on
- * that event (not its own `tabs.remove` call) to put a closed tab into "Recently closed".
+ * that event (not its own `tabs.remove` call) to put a closed tab into "Recently closed". Leaves
+ * unverified: real Firefox fires `onRemoved` asynchronously, not synchronously inside `remove`
+ * like this fake does, and does not model multi-window query scoping.
  */
 class FakeTabs {
   tabs: browser.tabs.Tab[] = [];
@@ -158,7 +176,11 @@ class FakeTabs {
   };
 }
 
-/** A fake `browser.sessions`, holding a per-tab `sluice` value map and recording `setTabValue` calls. */
+/**
+ * A fake `browser.sessions`, holding a per-tab `sluice` value map and recording `setTabValue`
+ * calls. Leaves unverified: real `sessions` storage's persistence across an actual browser
+ * restart and its serialization/quota behavior.
+ */
 class FakeSessions {
   values = new Map<number, unknown>();
   setCalls: Array<{ tabId: number; value: unknown }> = [];
@@ -263,6 +285,10 @@ function makeApi(storage: StorageNamespace, alarms: FakeAlarms) {
 }
 
 describe("start", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
   test("registers every listener synchronously, before any awaited work", () => {
     const storage = new FakeStorage();
     const alarms = new FakeAlarms();
@@ -401,10 +427,11 @@ describe("start", () => {
   });
 
   test("firing onStartup with lastActiveAt more than 72h old records an away gap and updates lastActiveAt to now", async () => {
+    vi.setSystemTime(FIXED_NOW);
     const storage = new FakeStorage();
     const alarms = new FakeAlarms();
     const { api, onStartup } = makeApi(storage, alarms);
-    const oldLastActiveAt = Date.now() - (73 * 60 * 60 * 1000);
+    const oldLastActiveAt = FIXED_NOW - 73 * HOUR;
     await storage.local.set({ lastActiveAt: oldLastActiveAt });
 
     start(api);
@@ -413,16 +440,17 @@ describe("start", () => {
 
     const gap = storage.peek("awayGap") as { start: number; end: number };
     expect(gap.start).toBe(oldLastActiveAt);
-    expect(gap.end).toBeTypeOf("number");
+    expect(gap.end).toBe(FIXED_NOW);
     const lastActiveAt = storage.peek("lastActiveAt") as number;
-    expect(lastActiveAt).toBeGreaterThan(oldLastActiveAt);
+    expect(lastActiveAt).toBe(FIXED_NOW);
   });
 
   test("firing onStartup with lastActiveAt exactly 72h old leaves awayGap unset", async () => {
+    vi.setSystemTime(FIXED_NOW);
     const storage = new FakeStorage();
     const alarms = new FakeAlarms();
     const { api, onStartup } = makeApi(storage, alarms);
-    const exactLastActiveAt = Date.now() - (72 * 60 * 60 * 1000);
+    const exactLastActiveAt = FIXED_NOW - 72 * HOUR;
     await storage.local.set({ lastActiveAt: exactLastActiveAt });
 
     start(api);
@@ -445,13 +473,24 @@ describe("start", () => {
   });
 
   test("firing onStartup records the away gap from the stale lastActiveAt, then restores tracking (adopting keepOpen from sessions) before the tick runs", async () => {
+    vi.setSystemTime(FIXED_NOW);
     const storage = new FakeStorage();
     const alarms = new FakeAlarms();
     const { api, onStartup, tabs, sessions, badgeTexts } = makeApi(storage, alarms);
-    const oldLastActiveAt = Date.now() - (73 * 60 * 60 * 1000);
+    const oldLastActiveAt = FIXED_NOW - 73 * HOUR;
     await storage.local.set({ lastActiveAt: oldLastActiveAt });
     tabs.tabs = [makeTab({ id: 1, active: true, url: "https://example.com/restored" })];
     sessions.values.set(1, { trackId: "restored-1", keepOpen: true });
+
+    // Capture, at every badge-text update, whatever `trackedTabs` already holds in storage at
+    // that instant -- an outcome-based way to show reconciliation landed before a badge update,
+    // with no spy on any Sluice function.
+    const trackedTabsAtEachBadgeUpdate: unknown[] = [];
+    const setBadgeText = api.action.setBadgeText;
+    api.action.setBadgeText = (details) => {
+      trackedTabsAtEachBadgeUpdate.push(storage.peek("trackedTabs"));
+      return setBadgeText(details);
+    };
 
     start(api);
     onStartup.fire();
@@ -469,15 +508,21 @@ describe("start", () => {
     }>;
     expect(tracked).toEqual([expect.objectContaining({ tabId: 1, trackId: "restored-1", keepOpen: true })]);
 
-    // The tick ran too, after reconciliation.
+    // The tick ran too, and by the time its (last) badge update fired, trackedTabs already
+    // carried the reconciled, keepOpen-restored record -- reconciliation finished first.
     expect(badgeTexts.at(-1)).toBe("");
+    expect(trackedTabsAtEachBadgeUpdate.length).toBeGreaterThan(0);
+    expect(trackedTabsAtEachBadgeUpdate.at(-1)).toEqual([
+      expect.objectContaining({ tabId: 1, trackId: "restored-1", keepOpen: true }),
+    ]);
   });
 
   test("an alarm tick with an old lastActiveAt records no gap", async () => {
+    vi.setSystemTime(FIXED_NOW);
     const storage = new FakeStorage();
     const alarms = new FakeAlarms();
     const { api } = makeApi(storage, alarms);
-    const oldLastActiveAt = Date.now() - (73 * 60 * 60 * 1000);
+    const oldLastActiveAt = FIXED_NOW - 73 * HOUR;
     await storage.local.set({ lastActiveAt: oldLastActiveAt });
 
     start(api);
@@ -490,10 +535,11 @@ describe("start", () => {
   });
 
   test("firing onInstalled records no gap", async () => {
+    vi.setSystemTime(FIXED_NOW);
     const storage = new FakeStorage();
     const alarms = new FakeAlarms();
     const { api, onInstalled } = makeApi(storage, alarms);
-    const oldLastActiveAt = Date.now() - (73 * 60 * 60 * 1000);
+    const oldLastActiveAt = FIXED_NOW - 73 * HOUR;
     await storage.local.set({ lastActiveAt: oldLastActiveAt });
 
     start(api);
@@ -712,10 +758,11 @@ describe("start", () => {
   });
 
   test("the alarm tick closes an expired inactive tab, leaves active and keep-open tabs, and prunes recently closed", async () => {
+    vi.setSystemTime(FIXED_NOW);
     const storage = new FakeStorage();
     const alarms = new FakeAlarms();
     const { api, tabs } = makeApi(storage, alarms);
-    const whenNow = Date.now();
+    const whenNow = FIXED_NOW;
     await storage.local.set({
       trackedTabs: [
         {

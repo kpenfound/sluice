@@ -115,7 +115,7 @@ describe("pauseRows", () => {
 describe("parsePauseForm", () => {
   const now = new Date(2024, 2, 15, 12, 0).getTime();
 
-  test("'date' mode: a past range with a specific end", () => {
+  test("parses a past start and a later end in 'date' mode", () => {
     const result = parsePauseForm(
       { start: "2024-03-01T09:00", endMode: "date", end: "2024-03-02T09:00", label: "" },
       now,
@@ -129,7 +129,7 @@ describe("parsePauseForm", () => {
     });
   });
 
-  test("'now' mode: a past start ends at now", () => {
+  test("parses a past start in 'now' mode, ending at now", () => {
     const result = parsePauseForm(
       { start: "2024-03-01T09:00", endMode: "now", end: "", label: "" },
       now,
@@ -140,7 +140,7 @@ describe("parsePauseForm", () => {
     });
   });
 
-  test("'none' mode: an open-ended pause", () => {
+  test("parses a past start in 'none' mode as open-ended", () => {
     const result = parsePauseForm(
       { start: "2024-03-01T09:00", endMode: "none", end: "", label: "" },
       now,
@@ -151,7 +151,7 @@ describe("parsePauseForm", () => {
     });
   });
 
-  test("a scheduled future range with a specific end", () => {
+  test("parses a future start and a later end in 'date' mode", () => {
     const start = new Date(2024, 2, 20, 9, 0);
     const end = new Date(2024, 2, 22, 9, 0);
     const result = parsePauseForm(
@@ -187,12 +187,12 @@ describe("parsePauseForm", () => {
     });
   });
 
-  test("error: a missing start", () => {
+  test("rejects a blank start", () => {
     const result = parsePauseForm({ start: "", endMode: "none", end: "", label: "" }, now);
     expect(result.ok).toBe(false);
   });
 
-  test("error: an unparseable start", () => {
+  test("rejects an unparseable start", () => {
     const result = parsePauseForm(
       { start: "not a date", endMode: "none", end: "", label: "" },
       now,
@@ -200,7 +200,7 @@ describe("parsePauseForm", () => {
     expect(result.ok).toBe(false);
   });
 
-  test("error: a missing end in 'date' mode", () => {
+  test("rejects a blank end in 'date' mode", () => {
     const result = parsePauseForm(
       { start: "2024-03-01T09:00", endMode: "date", end: "", label: "" },
       now,
@@ -208,7 +208,7 @@ describe("parsePauseForm", () => {
     expect(result.ok).toBe(false);
   });
 
-  test("error: an unparseable end in 'date' mode", () => {
+  test("rejects an unparseable end in 'date' mode", () => {
     const result = parsePauseForm(
       { start: "2024-03-01T09:00", endMode: "date", end: "not a date", label: "" },
       now,
@@ -216,7 +216,7 @@ describe("parsePauseForm", () => {
     expect(result.ok).toBe(false);
   });
 
-  test("error: an end not strictly after the start", () => {
+  test("rejects an end equal to the start", () => {
     const result = parsePauseForm(
       { start: "2024-03-01T09:00", endMode: "date", end: "2024-03-01T09:00", label: "" },
       now,
@@ -224,7 +224,7 @@ describe("parsePauseForm", () => {
     expect(result.ok).toBe(false);
   });
 
-  test("error: an end before the start", () => {
+  test("rejects an end before the start", () => {
     const result = parsePauseForm(
       { start: "2024-03-01T09:00", endMode: "date", end: "2024-02-28T09:00", label: "" },
       now,
@@ -232,37 +232,37 @@ describe("parsePauseForm", () => {
     expect(result.ok).toBe(false);
   });
 
-  test("error: 'now' mode with a future start", () => {
-    const future = new Date(now + 60 * 60 * 1000);
-    const pad = (n: number): string => String(n).padStart(2, "0");
-    const futureStr = `${future.getFullYear()}-${pad(future.getMonth() + 1)}-${pad(future.getDate())}T${pad(future.getHours())}:${pad(future.getMinutes())}`;
-    const result = parsePauseForm({ start: futureStr, endMode: "now", end: "", label: "" }, now);
+  test("rejects a future start in 'now' mode", () => {
+    const result = parsePauseForm(
+      { start: "2024-03-15T13:00", endMode: "now", end: "", label: "" },
+      now,
+    );
     expect(result.ok).toBe(false);
   });
 });
 
 describe("parseAutoCloseMinutes", () => {
-  test("accepts '1'", () => {
+  test("accepts the minimum auto-close of 1 minute", () => {
     expect(parseAutoCloseMinutes("1")).toEqual({ ok: true, ms: 60 * 1000 });
   });
 
-  test("accepts '120'", () => {
+  test("accepts 120 minutes, the default auto-close of 2 hours", () => {
     expect(parseAutoCloseMinutes("120")).toEqual({ ok: true, ms: 120 * 60 * 1000 });
   });
 
-  test("rejects '0'", () => {
+  test("rejects 0 minutes, one below the minimum", () => {
     expect(parseAutoCloseMinutes("0").ok).toBe(false);
   });
 
-  test("rejects '-5'", () => {
+  test("rejects a negative number of minutes", () => {
     expect(parseAutoCloseMinutes("-5").ok).toBe(false);
   });
 
-  test("rejects '1.5'", () => {
+  test("rejects a non-integer number of minutes", () => {
     expect(parseAutoCloseMinutes("1.5").ok).toBe(false);
   });
 
-  test("rejects 'abc'", () => {
+  test("rejects non-numeric input", () => {
     expect(parseAutoCloseMinutes("abc").ok).toBe(false);
   });
 
@@ -278,11 +278,9 @@ describe("autoCloseMinutes", () => {
 });
 
 describe("toDateTimeLocal", () => {
-  test("round-trips through parsePauseForm's start parsing", () => {
+  test("formats a timestamp with no padding needed", () => {
     const ms = new Date(2024, 5, 18, 14, 37).getTime();
-    const str = toDateTimeLocal(ms);
-    const result = parsePauseForm({ start: str, endMode: "none", end: "", label: "" }, ms + 1);
-    expect(result).toEqual({ ok: true, input: { start: ms, end: null } });
+    expect(toDateTimeLocal(ms)).toBe("2024-06-18T14:37");
   });
 
   test("pads single-digit month, day, hour and minute", () => {

@@ -1572,6 +1572,45 @@ describe("recordDueWeekendPauses", () => {
     ]);
   });
 
+  test("after a recorded weekend pause is edited, a later tick in the same weekend does not pause again, but the next weekend still is", async () => {
+    const saturday = new Date(2024, 0, 6, 10, 0).getTime();
+    const { store, advanceTo } = setupAt(saturday);
+    await store.setWeekendPauseEnabled(true);
+    await store.recordDueWeekendPauses();
+    const [recorded] = await store.getPauses();
+    await store.editPause(recorded!.id, { label: "Weekend trip" });
+
+    advanceTo(new Date(2024, 0, 7, 9, 0).getTime());
+    await store.recordDueWeekendPauses();
+
+    expect(await store.getPauses()).toEqual([
+      {
+        id: "id-0",
+        start: new Date(2024, 0, 6).getTime(),
+        end: new Date(2024, 0, 8).getTime(),
+        label: "Weekend trip",
+      },
+    ]);
+
+    advanceTo(new Date(2024, 0, 13, 10, 0).getTime());
+    await store.recordDueWeekendPauses();
+
+    expect(await store.getPauses()).toEqual([
+      {
+        id: "id-0",
+        start: new Date(2024, 0, 6).getTime(),
+        end: new Date(2024, 0, 8).getTime(),
+        label: "Weekend trip",
+      },
+      {
+        id: "id-1",
+        start: new Date(2024, 0, 13).getTime(),
+        end: new Date(2024, 0, 15).getTime(),
+        label: "Weekend",
+      },
+    ]);
+  });
+
   test("turning the setting off leaves a running weekend pause unchanged", async () => {
     const saturday = new Date(2024, 0, 6, 10, 0).getTime();
     const { store } = setupAt(saturday);

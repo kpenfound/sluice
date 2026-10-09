@@ -6,6 +6,9 @@
     <link rel="stylesheet" href="common.css" />
     <title>New Tab</title>
     <style>
+      :root {
+        color-scheme: light dark;
+      }
       body {
         font-family: system-ui, sans-serif;
         margin: 0;
@@ -360,6 +363,142 @@
       @media (max-width: 1100px) {
         .columns { flex-wrap: wrap; }
         .column { flex: 1 1 16rem; }
+      }
+      @media (prefers-color-scheme: dark) {
+        :root {
+          color: #e8e8e8;
+          background: #1a1a1a;
+        }
+        body {
+          color: #e8e8e8;
+          background: #1a1a1a;
+        }
+        .loading {
+          color: #aaa;
+        }
+        .message {
+          color: #ff6b57;
+        }
+        .bucket-button {
+          border-color: #555;
+          background: #2a2a2a;
+        }
+        .bucket-button.selected {
+          border-color: #e8e8e8;
+        }
+        .search-input {
+          border-color: #555;
+          background: #2a2a2a;
+          color: #e8e8e8;
+        }
+        .banner {
+          border-color: #5c5230;
+          background: #332d16;
+        }
+        .column {
+          background: #242424;
+          border-color: #3a3a3a;
+        }
+        .column h2,
+        .stale-header {
+          color: #aaa;
+        }
+        .item-card {
+          border-color: #3a3a3a;
+          background: #2a2a2a;
+        }
+        .item-card.overdue {
+          border-color: #ff6b57;
+          background: #3a1f1a;
+        }
+        .item-card:focus {
+          outline-color: #5b9bf7;
+        }
+        .favicon-placeholder {
+          background: #555;
+        }
+        .item-bucket,
+        .item-domain,
+        .item-meta,
+        .item-due {
+          color: #aaa;
+        }
+        .item-due {
+          color: #ddd;
+        }
+        .item-card.overdue .item-due {
+          color: #ff6b57;
+        }
+        .open-tabs-panel,
+        .recently-closed-panel,
+        .triage-row {
+          background: #242424;
+          border-color: #3a3a3a;
+        }
+        .open-tabs-panel h2,
+        .recently-closed-panel h2 {
+          color: #aaa;
+        }
+        .wash-now-button {
+          border-color: #ff6b57;
+          background: #2a2a2a;
+          color: #ff6b57;
+        }
+        .open-tab-row,
+        .closed-tab-row {
+          border-bottom-color: #3a3a3a;
+        }
+        .open-tab-domain,
+        .open-tab-keep-open,
+        .closed-tab-domain,
+        .closed-tab-time,
+        .triage-domain,
+        .triage-empty {
+          color: #aaa;
+        }
+        .open-tab-cue {
+          color: #ddd;
+        }
+        .triage-bucket-button,
+        .triage-riffle-button {
+          border-color: #555;
+          background: #2a2a2a;
+        }
+        .triage-bucket-button.selected {
+          border-color: #e8e8e8;
+        }
+        .triage-confirm {
+          border-color: #c0392b;
+          background: #c0392b;
+          color: #fff;
+        }
+        .triage-cancel {
+          border-color: #555;
+          background: #2a2a2a;
+        }
+        button,
+        select,
+        input:not([type="checkbox"]) {
+          background: #2a2a2a;
+          border-color: #555;
+          color: #e8e8e8;
+        }
+        button:hover {
+          background: #333;
+        }
+        :focus-visible {
+          outline-color: #5b9bf7;
+        }
+        #error,
+        [role="alert"] {
+          color: #ff6b57;
+        }
+        .empty-state {
+          background: #242424;
+        }
+        .keyboard-help {
+          color: #aaa;
+        }
       }
     </style>
     <script type="module" src="newtab.js"></script>

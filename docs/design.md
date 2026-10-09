@@ -133,7 +133,7 @@ Each item shows two ages in the UI. Both use wall-clock time. Only the overdue s
 ### Add
 
 1. Press the add hotkey, or click the toolbar button, on the current tab.
-2. A popup opens with the bucket and riffle already filled in. 72h is the default riffle. The default bucket is the last one I used.
+2. A popup opens with the bucket and riffle already filled in. The riffle choices are 24h, 72h, 1w and 1mo; 72h is the default. The default bucket is the last one I used. Stale is never an enqueue choice: an item reaches Stale only by a Defer from 1mo or by a Move.
 3. Press Enter to save, or change either field first.
 
 Proposed for v1 or later: domain rules that pick the bucket automatically, for example `github.com/dagger/*` goes to Dagger.
@@ -223,13 +223,13 @@ The normalizer is a pure function with its own unit tests. New site rules go in 
 Sluice sets `chrome_url_overrides.newtab`, so every new tab opens the launcher.
 
 - A bucket switcher runs along the top, with an overdue count on each bucket.
-- Each riffle is a column: 24h, 72h, 1w, 1mo, Stale. Stale is collapsed by default.
-- Overdue items are highlighted and sort to the top of their column.
-- Each item shows its favicon, title, domain, time in riffle, and total age.
-- Item actions work by mouse and by keyboard.
-- A search box filters every bucket and every riffle, Stale included.
+- The selected bucket shows one queue mixing its 24h, 72h, 1w and 1mo items, with no per-riffle columns. The queue is sorted by soonest due: ascending remaining active time, so the most overdue item leads, with ties broken by `queuedAt` then id. Each entry shows its riffle alongside its favicon, title, domain, time in riffle, and total age. Overdue entries are highlighted.
+- The bucket switcher has a Stale entry after the real buckets, styled as an archive and showing the Stale item count rather than an overdue count. Selecting it opens a cross-bucket Stale view: every Stale item across all buckets, each showing its bucket name, ordered by time moved into Stale, newest first. Stale items otherwise appear on the launcher only in search results, never in a bucket's queue.
+- Item actions work by mouse and by keyboard, including from the Stale view.
+- A search box filters every bucket and every riffle, Stale included, as one list: timed items first by soonest due, then Stale items newest into Stale first, each showing its bucket name.
 - While a pause is running, a banner shows when it started and offers Resume. "Due in" times are frozen.
 - The away-gap banner from the Pause section appears here.
+- Layout, top to bottom: the page header and any inline message; a full-width row with the bucket switcher (including the Stale entry) and the search box; the pause and away-gap banners when they apply; the full-width Open tabs panel; then a two-half area with the queue (or the Stale view, or search results) on the left and Recently closed on the right. The halves may stack vertically on a narrow window, queue first.
 - The page follows the browser/system light or dark theme.
 
 Firefox asks me to confirm the new tab override the first time. Only one extension can own the new tab page at a time.
@@ -244,7 +244,7 @@ Firefox asks me to confirm the new tab override the first time. Only one extensi
 
 A hotkey closes every tab in every normal window via a triage view. Private windows are untouched.
 
-1. Sluice opens a triage view on the new tab page. It lists the open tabs that aren't queued yet, with quick bucket and riffle buttons for each one.
+1. Sluice opens a triage view on the new tab page. It lists the open tabs that aren't queued yet, with quick bucket and riffle buttons for each one. The riffle buttons offer only 24h, 72h, 1w and 1mo; Stale is not an enqueue choice there either.
 2. I file what I want to keep, then confirm.
 3. Sluice closes every tab in every normal window, except tabs playing audio and tabs marked never to auto-close, and leaves one Sluice new tab open, since Firefox needs at least one tab in a window.
 
@@ -329,4 +329,5 @@ Sluice ships with three default buckets: Dagger, Side projects, Personal. A basi
 3. I should be able to set an open tab to not get auto-closed
 4. Remaining-time cues appear in the launcher's Open tabs list. Browser tab titles and favicons are not modified. The popup and Open tabs list both offer Keep open.
 5. Auto-close applies only to HTTP(S) tabs and skips audible tabs as well as active tabs and keep-open tabs. It runs on the one-minute alarm. Pausing freezes queue TTLs; it does not stop tab auto-close timers.
-6. Recently closed contains only unqueued HTTP(S) URLs, deduplicated by normalized URL, for at most seven days and 100 entries. The newest close replaces an older entry for the same URL. Queuing a URL removes its recently closed entry, and every capture surface remembers the selected bucket. Browser-internal pages, extension pages and local files do not appear there. Wash can close those pages, but triage lists only unqueued HTTP(S) tabs.
+6. Recently closed contains only unqueued HTTP(S) URLs, deduplicated by normalized URL, for at most seven days and 100 entries. The newest close replaces an older entry for the same URL. Queuing a URL removes its recently closed entry, and every capture surface remembers the selected bucket. Browser-internal pages, extension pages and local files do not appear there. Wash can close those pages, but triage lists only unqueued HTTP(S) tabs. Each Recently closed entry has a File control to queue it; its riffle choices are 24h, 72h, 1w and 1mo, the same ladder as the popup add form and triage. Stale is not offered there either.
+7. The launcher's bucket switcher carries a Stale entry after the real buckets, and `[`/`]` cycle through the real buckets plus that entry. Up/Down and `j`/`k` move focus through the displayed queue (or Stale view, or search results) list in order. The other item keys keep their meaning: Enter/`o` open, `d` defer, `m` move, `b` change bucket, `x`/Delete resolve, `/` search, Escape clear. The on-page keyboard help lists only the keys that work.

@@ -116,6 +116,13 @@ describe("new tab page dark-scheme support", () => {
     const commonCss = await read("../common.css");
     expect(commonCss).not.toMatch(/color-scheme/);
   });
+
+  test("index.ts has no JS theme detection, so the scheme stays driven only by CSS", async () => {
+    const indexTs = await read("index.ts");
+    expect(indexTs).not.toMatch(/matchMedia/);
+    expect(indexTs).not.toMatch(/prefers-color-scheme/);
+    expect(indexTs).not.toMatch(/theme-preference/);
+  });
 });
 
 describe("dark-mode colour distinctness and readability", () => {

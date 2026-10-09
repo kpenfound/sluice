@@ -6,6 +6,7 @@ import { detectAwayGap } from "./away";
 import type { AwayGap } from "./away";
 import { DEFAULT_AUTO_CLOSE_AFTER, addClosed, isClosable, isQueuedUrl, isValidAutoCloseAfter, pruneClosed } from "./lifecycle";
 import type { ClosedTab, TrackedTab } from "./lifecycle";
+import { coverageStartAt, weekendsDue } from "./weekend";
 
 /** A changed item in a `storage.onChanged` event, matching `browser.storage.StorageChange`. */
 export interface StorageChange {
@@ -97,14 +98,17 @@ export interface Store {
   pruneRecentlyClosed(): Promise<ClosedTab[]>;
   getAutoCloseAfter(): Promise<number>;
   setAutoCloseAfter(ms: number): Promise<void>;
+  getWeekendPauseEnabled(): Promise<boolean>;
+  setWeekendPauseEnabled(enabled: boolean): Promise<void>;
+  recordDueWeekendPauses(): Promise<Pause[]>;
   subscribe(
     listener: (changes: Record<string, StorageChange>, areaName: string) => void,
   ): () => void;
 }
 
 type StorageKey = "buckets" | "items" | "pauses" | "trackedTabs" | "recentlyClosed";
-type PrefKey = "lastActiveAt" | "lastBucketId";
-type WatchedKey = StorageKey | "awayGap" | "autoCloseAfter";
+type PrefKey = "lastActiveAt" | "lastBucketId" | "weekendsRecordedThrough";
+type WatchedKey = StorageKey | "awayGap" | "autoCloseAfter" | "weekendPauseEnabled";
 
 const WATCHED_KEYS: WatchedKey[] = [
   "buckets",
@@ -114,7 +118,11 @@ const WATCHED_KEYS: WatchedKey[] = [
   "trackedTabs",
   "recentlyClosed",
   "autoCloseAfter",
+  "weekendPauseEnabled",
 ];
+
+/** The label a recorded weekend pause gets, unless it merges into a pause that already has one. */
+const WEEKEND_PAUSE_LABEL = "Weekend";
 
 /**
  * Builds buckets, items and pauses as persisted in `storage.local`, backed by the
@@ -689,6 +697,61 @@ export function createStore(storage: StorageNamespace, options: StoreOptions = {
     });
   }
 
+  /** Reads the weekend-pause setting, defaulting to off (false) when absent. */
+  function getWeekendPauseEnabled(): Promise<boolean> {
+    return enqueue(async () => {
+      const stored = await storage.local.get("weekendPauseEnabled");
+      return (stored.weekendPauseEnabled as boolean | undefined) ?? false;
+    });
+  }
+
+  /**
+   * Turns the weekend-pause setting on or off. Turning it on advances the "recorded through"
+   * marker no further back than where it already stood, and no further forward than the start
+   * of the weekend covering `now` (its Saturday 00:00) when `now` falls inside one, so a weekend
+   * that ended before this call is never recorded and a weekend already recorded is never
+   * recorded again.
+   */
+  function setWeekendPauseEnabled(enabled: boolean): Promise<void> {
+    return enqueue(async () => {
+      if (!enabled) {
+        await storage.local.set({ weekendPauseEnabled: false });
+        return;
+      }
+      const stored = await storage.local.get("weekendsRecordedThrough");
+      const existing = (stored.weekendsRecordedThrough as number | undefined) ?? -Infinity;
+      const marker = Math.max(existing, coverageStartAt(now()));
+      await storage.local.set({ weekendPauseEnabled: true, weekendsRecordedThrough: marker });
+    });
+  }
+
+  /**
+   * With the setting on, records every weekend due since the "recorded through" marker, up to
+   * now, as a pause labelled "Weekend" through the same validate/merge-on-write path `addPause`
+   * uses, and advances the marker past the last one recorded. With the setting off, or nothing
+   * due, makes no write.
+   */
+  function recordDueWeekendPauses(): Promise<Pause[]> {
+    return enqueue(async () => {
+      const stored = await storage.local.get(["weekendPauseEnabled", "weekendsRecordedThrough", "pauses"]);
+      const enabled = (stored.weekendPauseEnabled as boolean | undefined) ?? false;
+      const pauses = (stored.pauses as Pause[] | undefined) ?? [];
+      if (!enabled) return pauses;
+
+      const whenNow = now();
+      const marker = (stored.weekendsRecordedThrough as number | undefined) ?? whenNow;
+      const due = weekendsDue(marker, whenNow);
+      if (due.length === 0) return pauses;
+
+      let next = pauses;
+      for (const range of due) {
+        next = mergeWrite(next, { id: newId(), start: range.start, end: range.end, label: WEEKEND_PAUSE_LABEL }).next;
+      }
+      await storage.local.set({ pauses: next, weekendsRecordedThrough: due[due.length - 1]!.end });
+      return next;
+    });
+  }
+
   function subscribe(
     listener: (changes: Record<string, StorageChange>, areaName: string) => void,
   ): () => void {
@@ -740,6 +803,9 @@ export function createStore(storage: StorageNamespace, options: StoreOptions = {
     pruneRecentlyClosed,
     getAutoCloseAfter,
     setAutoCloseAfter,
+    getWeekendPauseEnabled,
+    setWeekendPauseEnabled,
+    recordDueWeekendPauses,
     subscribe,
   };
 }

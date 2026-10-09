@@ -137,6 +137,61 @@ describe("tick", () => {
     expect(storage.peek("awayGap")).toBeUndefined();
   });
 
+  test("with the weekend setting on, a tick during a weekend records it and the badge shows the pause glyph on that same tick", async () => {
+    const storage = new FakeStorage();
+    const saturday = new Date(2024, 0, 6, 10, 0).getTime();
+    let current = saturday;
+    const now = (): number => current;
+    const newId = makeIds();
+    const store = createStore(storage, { now, newId });
+    const badgeTexts: string[] = [];
+    await store.setWeekendPauseEnabled(true);
+
+    await tick({ store, setBadgeText: (text) => void badgeTexts.push(text), now });
+
+    expect(storage.peek("pauses")).toEqual([
+      {
+        id: "id-0",
+        start: new Date(2024, 0, 6).getTime(),
+        end: new Date(2024, 0, 8).getTime(),
+        label: "Weekend",
+      },
+    ]);
+    expect(badgeTexts).toEqual(["⏸"]);
+  });
+
+  test("with the weekend setting on, a restart after two missed weekends records both on the next tick", async () => {
+    const storage = new FakeStorage();
+    let current = new Date(2024, 0, 6, 10, 0).getTime();
+    const now = (): number => current;
+    const newId = makeIds();
+    const store = createStore(storage, { now, newId });
+    const bucket = (await store.getBuckets())[0]!;
+    // An item anchored before every weekend below, so none of the recorded pauses become
+    // prunable (pauses.ts prunes only a pause ending at or before the oldest item anchor).
+    await store.addItem({ url: "https://example.com/", title: "Example", bucketId: bucket.id, riffle: "1mo" });
+    await store.setWeekendPauseEnabled(true);
+    await tick({ store, setBadgeText: () => undefined, now });
+
+    current = new Date(2024, 0, 21, 9, 0).getTime();
+    await tick({ store, setBadgeText: () => undefined, now });
+
+    const pauses = storage.peek("pauses") as Array<{ start: number; end: number; label?: string }>;
+    expect(pauses).toHaveLength(3);
+    expect(pauses.map((p) => p.label)).toEqual(["Weekend", "Weekend", "Weekend"]);
+  });
+
+  test("with the weekend setting off, a tick on a weekend writes no pause", async () => {
+    const storage = new FakeStorage();
+    const saturday = new Date(2024, 0, 6, 10, 0).getTime();
+    const now = (): number => saturday;
+    const store = createStore(storage, { now, newId: makeIds() });
+
+    await tick({ store, setBadgeText: () => undefined, now });
+
+    expect(storage.peek("pauses")).toBeUndefined();
+  });
+
   test("a scheduled pause's end passing between two ticks shows the symbol then the count, with no write to that pause", async () => {
     const { storage, clock, store, setBadgeText, badgeTexts } = setup();
     const bucket = (await store.getBuckets())[0]!;

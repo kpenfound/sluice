@@ -1408,6 +1408,205 @@ describe("lifecycle", () => {
   });
 });
 
+describe("weekend pause setting", () => {
+  test("getWeekendPauseEnabled is false before it's ever set", async () => {
+    const { store } = createTestStore();
+    expect(await store.getWeekendPauseEnabled()).toBe(false);
+  });
+
+  test("setWeekendPauseEnabled(true) persists and reads back true", async () => {
+    const { store } = createTestStore();
+    await store.setWeekendPauseEnabled(true);
+    expect(await store.getWeekendPauseEnabled()).toBe(true);
+  });
+
+  test("setWeekendPauseEnabled(false) persists and reads back false, even after being turned on", async () => {
+    const { store } = createTestStore();
+    await store.setWeekendPauseEnabled(true);
+    await store.setWeekendPauseEnabled(false);
+    expect(await store.getWeekendPauseEnabled()).toBe(false);
+  });
+
+  test("fires a subscribe listener, the same way autoCloseAfter does", async () => {
+    const { store } = createTestStore();
+    const received: unknown[] = [];
+    store.subscribe((changes) => received.push(changes));
+
+    await store.setWeekendPauseEnabled(true);
+
+    expect(received).toHaveLength(1);
+  });
+});
+
+describe("recordDueWeekendPauses", () => {
+  /** A store whose clock starts at `startMs` and can be moved forward, for weekend-boundary fixtures. */
+  function setupAt(startMs: number) {
+    const storage = new FakeStorage();
+    let current = startMs;
+    const now = (): number => current;
+    const advanceTo = (ms: number): void => {
+      current = ms;
+    };
+    const store = createStore(storage, { now, newId: makeIds() });
+    return { storage, store, advanceTo };
+  }
+
+  test("writes no pause when the setting is off, whatever the day", async () => {
+    const saturday = new Date(2024, 0, 6, 10, 0).getTime();
+    const { store } = setupAt(saturday);
+
+    await store.recordDueWeekendPauses();
+
+    expect(await store.getPauses()).toEqual([]);
+  });
+
+  test("with the setting on, records the current weekend labelled Weekend from Saturday 00:00 to Monday 00:00", async () => {
+    const saturday = new Date(2024, 0, 6, 10, 0).getTime();
+    const { store } = setupAt(saturday);
+    await store.setWeekendPauseEnabled(true);
+
+    await store.recordDueWeekendPauses();
+
+    expect(await store.getPauses()).toEqual([
+      {
+        id: "id-0",
+        start: new Date(2024, 0, 6).getTime(),
+        end: new Date(2024, 0, 8).getTime(),
+        label: "Weekend",
+      },
+    ]);
+  });
+
+  test("records both weekends missed while Firefox was closed in between", async () => {
+    const firstSaturday = new Date(2024, 0, 6, 10, 0).getTime();
+    const { store, advanceTo } = setupAt(firstSaturday);
+    await store.setWeekendPauseEnabled(true);
+    await store.recordDueWeekendPauses();
+
+    advanceTo(new Date(2024, 0, 21, 9, 0).getTime());
+    await store.recordDueWeekendPauses();
+
+    expect(await store.getPauses()).toEqual([
+      {
+        id: "id-0",
+        start: new Date(2024, 0, 6).getTime(),
+        end: new Date(2024, 0, 8).getTime(),
+        label: "Weekend",
+      },
+      {
+        id: "id-1",
+        start: new Date(2024, 0, 13).getTime(),
+        end: new Date(2024, 0, 15).getTime(),
+        label: "Weekend",
+      },
+      {
+        id: "id-2",
+        start: new Date(2024, 0, 20).getTime(),
+        end: new Date(2024, 0, 22).getTime(),
+        label: "Weekend",
+      },
+    ]);
+  });
+
+  test("turning the setting on mid-weekend covers that weekend from Saturday 00:00, skipping an earlier, already-ended weekend", async () => {
+    const sundayAfternoon = new Date(2024, 0, 14, 15, 0).getTime();
+    const { store } = setupAt(sundayAfternoon);
+
+    await store.setWeekendPauseEnabled(true);
+    await store.recordDueWeekendPauses();
+
+    expect(await store.getPauses()).toEqual([
+      {
+        id: "id-0",
+        start: new Date(2024, 0, 13).getTime(),
+        end: new Date(2024, 0, 15).getTime(),
+        label: "Weekend",
+      },
+    ]);
+  });
+
+  test("after Resume during a running weekend pause, a later tick in the same weekend does not pause again", async () => {
+    const saturday = new Date(2024, 0, 6, 10, 0).getTime();
+    const { store, advanceTo } = setupAt(saturday);
+    await store.setWeekendPauseEnabled(true);
+    await store.recordDueWeekendPauses();
+
+    advanceTo(new Date(2024, 0, 6, 14, 0).getTime());
+    await store.resume();
+
+    advanceTo(new Date(2024, 0, 7, 9, 0).getTime());
+    await store.recordDueWeekendPauses();
+
+    expect(await store.getPauses()).toEqual([
+      {
+        id: "id-0",
+        start: new Date(2024, 0, 6).getTime(),
+        end: new Date(2024, 0, 6, 14, 0).getTime(),
+        label: "Weekend",
+      },
+    ]);
+  });
+
+  test("after a recorded weekend pause is deleted, a later tick in the same weekend does not pause again, but the next weekend still is", async () => {
+    const saturday = new Date(2024, 0, 6, 10, 0).getTime();
+    const { store, advanceTo } = setupAt(saturday);
+    await store.setWeekendPauseEnabled(true);
+    await store.recordDueWeekendPauses();
+    const [recorded] = await store.getPauses();
+    await store.deletePause(recorded!.id);
+
+    advanceTo(new Date(2024, 0, 7, 9, 0).getTime());
+    await store.recordDueWeekendPauses();
+    expect(await store.getPauses()).toEqual([]);
+
+    advanceTo(new Date(2024, 0, 13, 10, 0).getTime());
+    await store.recordDueWeekendPauses();
+
+    expect(await store.getPauses()).toEqual([
+      {
+        id: "id-1",
+        start: new Date(2024, 0, 13).getTime(),
+        end: new Date(2024, 0, 15).getTime(),
+        label: "Weekend",
+      },
+    ]);
+  });
+
+  test("turning the setting off leaves a running weekend pause unchanged", async () => {
+    const saturday = new Date(2024, 0, 6, 10, 0).getTime();
+    const { store } = setupAt(saturday);
+    await store.setWeekendPauseEnabled(true);
+    await store.recordDueWeekendPauses();
+    const before = await store.getPauses();
+
+    await store.setWeekendPauseEnabled(false);
+
+    expect(await store.getPauses()).toEqual(before);
+  });
+
+  test("merges with an overlapping manual pause instead of storing two overlapping ranges", async () => {
+    const saturday = new Date(2024, 0, 6, 10, 0).getTime();
+    const { store } = setupAt(saturday);
+    await store.addPause({
+      start: new Date(2024, 0, 5, 18, 0).getTime(),
+      end: new Date(2024, 0, 6, 12, 0).getTime(),
+      label: "Vacation",
+    });
+    await store.setWeekendPauseEnabled(true);
+
+    await store.recordDueWeekendPauses();
+
+    expect(await store.getPauses()).toEqual([
+      {
+        id: "id-0",
+        start: new Date(2024, 0, 5, 18, 0).getTime(),
+        end: new Date(2024, 0, 8).getTime(),
+        label: "Vacation",
+      },
+    ]);
+  });
+});
+
 describe("storage shared across extension contexts", () => {
   function contexts() {
     const storage = new FakeStorage();

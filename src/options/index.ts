@@ -300,12 +300,29 @@ function renderAddPauseForm(container: HTMLElement): void {
   container.append(form);
 }
 
-function renderPauses(container: HTMLElement, rows: PauseRow[]): void {
+function renderWeekendPauseSetting(container: HTMLElement, enabled: boolean): void {
+  const label = document.createElement("label");
+
+  const checkbox = document.createElement("input");
+  checkbox.type = "checkbox";
+  checkbox.checked = enabled;
+  checkbox.addEventListener("change", () => {
+    void store.setWeekendPauseEnabled(checkbox.checked).catch(showError);
+  });
+  label.append(checkbox);
+  label.append(document.createTextNode(" Pause automatically on weekends"));
+
+  container.append(label);
+}
+
+function renderPauses(container: HTMLElement, rows: PauseRow[], weekendPauseEnabled: boolean): void {
   const section = document.createElement("section");
 
   const heading = document.createElement("h2");
   heading.textContent = "Pauses";
   section.append(heading);
+
+  renderWeekendPauseSetting(section, weekendPauseEnabled);
 
   const list = document.createElement("ul");
   for (const row of rows) {
@@ -365,10 +382,11 @@ function renderTabs(container: HTMLElement, autoCloseAfter: number): void {
 }
 
 async function renderApp(): Promise<void> {
-  const [buckets, pauses, autoCloseAfter] = await Promise.all([
+  const [buckets, pauses, autoCloseAfter, weekendPauseEnabled] = await Promise.all([
     store.getBuckets(),
     store.getPauses(),
     store.getAutoCloseAfter(),
+    store.getWeekendPauseEnabled(),
   ]);
   const rows = pauseRows(pauses, Date.now());
 
@@ -380,12 +398,14 @@ async function renderApp(): Promise<void> {
   app.append(container);
 
   renderBuckets(container, buckets);
-  renderPauses(container, rows);
+  renderPauses(container, rows, weekendPauseEnabled);
   renderTabs(container, autoCloseAfter);
 }
 
 void renderApp().catch(showError);
 const unsubscribe = store.subscribe((changes) => {
-  if (["buckets", "pauses", "autoCloseAfter"].some((key) => key in changes)) void renderApp().catch(showError);
+  if (["buckets", "pauses", "autoCloseAfter", "weekendPauseEnabled"].some((key) => key in changes)) {
+    void renderApp().catch(showError);
+  }
 });
 window.addEventListener("unload", unsubscribe);

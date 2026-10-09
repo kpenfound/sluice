@@ -10,14 +10,15 @@ export interface TickDeps {
 }
 
 /**
- * The per-minute background duties: mark the extension active, prune pauses that can
- * no longer affect any item, and refresh the badge. Makes no `pauses` write when
- * nothing is prunable.
+ * The per-minute background duties: mark the extension active, record any due weekend pauses,
+ * prune pauses that can no longer affect any item, and refresh the badge. Makes no `pauses`
+ * write when nothing is due or prunable.
  */
 export async function tick(deps: TickDeps): Promise<void> {
   const { store, setBadgeText, now } = deps;
 
   await store.touchActive();
+  await store.recordDueWeekendPauses();
 
   const [buckets, items, pauses] = await Promise.all([
     store.getBuckets(),

@@ -1,7 +1,7 @@
 import { describe, expect, test } from "vitest";
 import type { AwayGap } from "../lib/away";
 import type { ClosedTab, TrackedTab } from "../lib/lifecycle";
-import { DAY, HOUR, RIFFLES } from "../lib/model";
+import { DAY, HOUR } from "../lib/model";
 import type { Bucket, Item, Pause } from "../lib/model";
 import type { WashTab } from "../lib/wash";
 import {
@@ -58,14 +58,15 @@ describe("launcherView: bucket switcher", () => {
       makeItem({ id: "i1", bucketId: "b-dagger", riffle: "24h", riffleEnteredAt: NOW - 100 * HOUR }),
     ];
     const view = launcherView(baseInput({ items }));
-    expect(view.buckets.map((b) => b.id)).toEqual(["b-dagger", "b-personal", "b-side"]);
-    expect(view.buckets.map((b) => b.overdueCount)).toEqual([1, 0, 0]);
+    const realBuckets = view.switcher.filter((e) => !e.isStale);
+    expect(realBuckets.map((b) => b.id)).toEqual(["b-dagger", "b-personal", "b-side"]);
+    expect(realBuckets.map((b) => b.count)).toEqual([1, 0, 0]);
   });
 
   test("marks the effective selected bucket", () => {
     const view = launcherView(baseInput({ selectedBucketId: "b-personal" }));
-    expect(view.buckets.find((b) => b.id === "b-personal")?.selected).toBe(true);
-    expect(view.buckets.find((b) => b.id === "b-dagger")?.selected).toBe(false);
+    expect(view.switcher.find((b) => b.id === "b-personal")?.selected).toBe(true);
+    expect(view.switcher.find((b) => b.id === "b-dagger")?.selected).toBe(false);
     expect(view.selectedBucketId).toBe("b-personal");
   });
 
@@ -80,120 +81,6 @@ describe("launcherView: bucket switcher", () => {
   });
 });
 
-describe("launcherView: grouping into columns", () => {
-  test("places each item only in its own riffle's column", () => {
-    const items = [
-      makeItem({ id: "i-24h", riffle: "24h" }),
-      makeItem({ id: "i-72h", riffle: "72h" }),
-      makeItem({ id: "i-1w", riffle: "1w" }),
-      makeItem({ id: "i-1mo", riffle: "1mo" }),
-      makeItem({ id: "i-stale", riffle: "stale" }),
-    ];
-    const view = launcherView(baseInput({ items }));
-    expect(view.columns.map((c) => c.riffle)).toEqual(["24h", "72h", "1w", "1mo", "stale"]);
-    for (const column of view.columns) {
-      expect(column.items.map((i) => i.id)).toEqual([`i-${column.riffle}`]);
-    }
-  });
-
-  test("excludes items from other buckets when no search is active", () => {
-    const items = [
-      makeItem({ id: "mine", bucketId: "b-dagger" }),
-      makeItem({ id: "other", bucketId: "b-personal" }),
-    ];
-    const view = launcherView(baseInput({ items, selectedBucketId: "b-dagger" }));
-    const column72h = view.columns.find((c) => c.riffle === "72h");
-    expect(column72h?.items.map((i) => i.id)).toEqual(["mine"]);
-  });
-});
-
-describe("launcherView: ordering within a column", () => {
-  test("overdue items come first, most overdue first, then the rest ascending by remaining", () => {
-    const items = [
-      // 72h TTL; remaining = TTL - elapsed
-      makeItem({ id: "soon", riffle: "72h", riffleEnteredAt: NOW - 70 * HOUR }), // remaining 2h
-      makeItem({ id: "later", riffle: "72h", riffleEnteredAt: NOW - 10 * HOUR }), // remaining 62h
-      makeItem({ id: "very-overdue", riffle: "72h", riffleEnteredAt: NOW - 100 * HOUR }), // remaining -28h
-      makeItem({ id: "slightly-overdue", riffle: "72h", riffleEnteredAt: NOW - 73 * HOUR }), // remaining -1h
-    ];
-    const view = launcherView(baseInput({ items }));
-    const column = view.columns.find((c) => c.riffle === "72h");
-    expect(column?.items.map((i) => i.id)).toEqual([
-      "very-overdue",
-      "slightly-overdue",
-      "soon",
-      "later",
-    ]);
-  });
-
-  test("ties on remaining break by queuedAt ascending", () => {
-    const items = [
-      makeItem({
-        id: "newer",
-        riffle: "72h",
-        riffleEnteredAt: NOW - 10 * HOUR,
-        queuedAt: NOW - 5 * HOUR,
-      }),
-      makeItem({
-        id: "older",
-        riffle: "72h",
-        riffleEnteredAt: NOW - 10 * HOUR,
-        queuedAt: NOW - 50 * HOUR,
-      }),
-    ];
-    const view = launcherView(baseInput({ items }));
-    const column = view.columns.find((c) => c.riffle === "72h");
-    expect(column?.items.map((i) => i.id)).toEqual(["older", "newer"]);
-  });
-
-  test("ties on remaining and queuedAt break by id", () => {
-    const items = [
-      makeItem({ id: "b-item", riffle: "72h", riffleEnteredAt: NOW - 10 * HOUR, queuedAt: NOW - 5 * HOUR }),
-      makeItem({ id: "a-item", riffle: "72h", riffleEnteredAt: NOW - 10 * HOUR, queuedAt: NOW - 5 * HOUR }),
-    ];
-    const view = launcherView(baseInput({ items }));
-    const column = view.columns.find((c) => c.riffle === "72h");
-    expect(column?.items.map((i) => i.id)).toEqual(["a-item", "b-item"]);
-  });
-
-  test("Stale orders by riffleEnteredAt descending (newest first)", () => {
-    const items = [
-      makeItem({ id: "oldest", riffle: "stale", riffleEnteredAt: NOW - 100 * HOUR }),
-      makeItem({ id: "newest", riffle: "stale", riffleEnteredAt: NOW - 1 * HOUR }),
-      makeItem({ id: "middle", riffle: "stale", riffleEnteredAt: NOW - 50 * HOUR }),
-    ];
-    const view = launcherView(baseInput({ items }));
-    const column = view.columns.find((c) => c.riffle === "stale");
-    expect(column?.items.map((i) => i.id)).toEqual(["newest", "middle", "oldest"]);
-  });
-
-  test("Stale ties on riffleEnteredAt break by queuedAt ascending, then id", () => {
-    const items = [
-      makeItem({
-        id: "z",
-        riffle: "stale",
-        riffleEnteredAt: NOW - 10 * HOUR,
-        queuedAt: NOW - 5 * HOUR,
-      }),
-      makeItem({
-        id: "a",
-        riffle: "stale",
-        riffleEnteredAt: NOW - 10 * HOUR,
-        queuedAt: NOW - 5 * HOUR,
-      }),
-      makeItem({
-        id: "earlier-queued",
-        riffle: "stale",
-        riffleEnteredAt: NOW - 10 * HOUR,
-        queuedAt: NOW - 50 * HOUR,
-      }),
-    ];
-    const view = launcherView(baseInput({ items }));
-    const column = view.columns.find((c) => c.riffle === "stale");
-    expect(column?.items.map((i) => i.id)).toEqual(["earlier-queued", "a", "z"]);
-  });
-});
-
 describe("launcherView: item view fields", () => {
   test("carries favIconUrl, domain, timeInRiffle, totalAge, remaining and overdue", () => {
     const item = makeItem({
@@ -205,8 +92,7 @@ describe("launcherView: item view fields", () => {
       queuedAt: NOW - 5 * HOUR,
     });
     const view = launcherView(baseInput({ items: [item] }));
-    const column = view.columns.find((c) => c.riffle === "24h");
-    const itemView = column?.items[0];
+    const itemView = view.queue[0];
     expect(itemView?.favIconUrl).toBe("https://example.com/favicon.ico");
     expect(itemView?.domain).toBe("example.com");
     expect(itemView?.timeInRiffle).toBe(2 * HOUR);
@@ -219,64 +105,21 @@ describe("launcherView: item view fields", () => {
     const item = makeItem({ id: "i1" });
     delete item.favIconUrl;
     const view = launcherView(baseInput({ items: [item] }));
-    const column = view.columns.find((c) => c.riffle === "72h");
-    expect(column?.items[0]?.favIconUrl).toBeUndefined();
+    expect(view.queue[0]?.favIconUrl).toBeUndefined();
   });
 
   test("domain is an empty string for an unparseable URL, and doesn't throw", () => {
     const item = makeItem({ id: "i1", url: "not a url" });
     expect(() => launcherView(baseInput({ items: [item] }))).not.toThrow();
     const view = launcherView(baseInput({ items: [item] }));
-    const column = view.columns.find((c) => c.riffle === "72h");
-    expect(column?.items[0]?.domain).toBe("");
+    expect(view.queue[0]?.domain).toBe("");
   });
 
   test("remaining is null for Stale items", () => {
     const item = makeItem({ id: "i1", riffle: "stale" });
     const view = launcherView(baseInput({ items: [item] }));
-    const column = view.columns.find((c) => c.riffle === "stale");
-    expect(column?.items[0]?.remaining).toBeNull();
-    expect(column?.items[0]?.overdue).toBe(false);
-  });
-});
-
-describe("launcherView: search", () => {
-  test("a non-blank query matches title or url case-insensitively, across every bucket", () => {
-    const items = [
-      makeItem({ id: "title-match", bucketId: "b-dagger", title: "Read about Widgets", url: "https://a.example/x" }),
-      makeItem({ id: "url-match", bucketId: "b-personal", title: "Something else", url: "https://widgets.example/y" }),
-      makeItem({ id: "no-match", bucketId: "b-side", title: "Unrelated", url: "https://other.example/z" }),
-    ];
-    const view = launcherView(baseInput({ items, selectedBucketId: "b-dagger", query: "WIDGET" }));
-    const column = view.columns.find((c) => c.riffle === "72h");
-    expect(column?.items.map((i) => i.id)).toEqual(["title-match", "url-match"]);
-  });
-
-  test("matches include Stale, and are labelled with their bucket name", () => {
-    const items = [
-      makeItem({ id: "stale-match", bucketId: "b-personal", riffle: "stale", title: "Widget archive" }),
-    ];
-    const view = launcherView(baseInput({ items, selectedBucketId: "b-dagger", query: "widget" }));
-    const column = view.columns.find((c) => c.riffle === "stale");
-    expect(column?.items.map((i) => i.id)).toEqual(["stale-match"]);
-    expect(column?.items[0]?.bucketName).toBe("Personal");
-  });
-
-  test("a blank or whitespace-only query shows only the selected bucket's items", () => {
-    const items = [
-      makeItem({ id: "mine", bucketId: "b-dagger" }),
-      makeItem({ id: "other", bucketId: "b-personal" }),
-    ];
-    const blank = launcherView(baseInput({ items, selectedBucketId: "b-dagger", query: "   " }));
-    const column = blank.columns.find((c) => c.riffle === "72h");
-    expect(column?.items.map((i) => i.id)).toEqual(["mine"]);
-  });
-
-  test("staleExpanded is true only while a query is active", () => {
-    const noQuery = launcherView(baseInput({ query: "" }));
-    expect(noQuery.staleExpanded).toBe(false);
-    const withQuery = launcherView(baseInput({ query: "x" }));
-    expect(withQuery.staleExpanded).toBe(true);
+    expect(view.staleItems[0]?.remaining).toBeNull();
+    expect(view.staleItems[0]?.overdue).toBe(false);
   });
 });
 
@@ -458,6 +301,16 @@ describe("launcherView: searchResults", () => {
     expect(launcherView(baseInput({ items, query: "" })).searchResults).toEqual([]);
     expect(launcherView(baseInput({ items, query: "   " })).searchResults).toEqual([]);
   });
+
+  test("matches title or url case-insensitively, across every bucket", () => {
+    const items = [
+      makeItem({ id: "title-match", bucketId: "b-dagger", title: "Read about Widgets", url: "https://a.example/x" }),
+      makeItem({ id: "url-match", bucketId: "b-personal", title: "Something else", url: "https://widgets.example/y" }),
+      makeItem({ id: "no-match", bucketId: "b-side", title: "Unrelated", url: "https://other.example/z" }),
+    ];
+    const view = launcherView(baseInput({ items, query: "WIDGET" }));
+    expect(view.searchResults.map((i) => i.id).sort()).toEqual(["title-match", "url-match"]);
+  });
 });
 
 describe("launcherView: pause banner", () => {
@@ -551,10 +404,6 @@ describe("keyAction", () => {
     expect(keyAction("j", false)).toBe("nextItem");
     expect(keyAction("ArrowUp", false)).toBe("prevItem");
     expect(keyAction("k", false)).toBe("prevItem");
-    expect(keyAction("ArrowRight", false)).toBe("nextColumn");
-    expect(keyAction("l", false)).toBe("nextColumn");
-    expect(keyAction("ArrowLeft", false)).toBe("prevColumn");
-    expect(keyAction("h", false)).toBe("prevColumn");
     expect(keyAction("Enter", false)).toBe("open");
     expect(keyAction("o", false)).toBe("open");
     expect(keyAction("d", false)).toBe("defer");
@@ -570,6 +419,13 @@ describe("keyAction", () => {
 
   test("returns null for an unmapped key", () => {
     expect(keyAction("q", false)).toBeNull();
+  });
+
+  test("the old column-navigation keys are unbound, since there are no columns left", () => {
+    expect(keyAction("ArrowRight", false)).toBeNull();
+    expect(keyAction("l", false)).toBeNull();
+    expect(keyAction("ArrowLeft", false)).toBeNull();
+    expect(keyAction("h", false)).toBeNull();
   });
 
   test("every key but Escape is ignored while focus is in a text input", () => {
@@ -1005,7 +861,7 @@ test("search preserves bucket identity when bucket names are identical", () => {
     query: "post",
     items: [makeItem({ bucketId: "b-personal" })],
   }));
-  const item = view.columns.find((column) => column.riffle === "72h")!.items[0]!;
+  const item = view.searchResults[0]!;
   expect(item.bucketName).toBe("Work");
   expect(item.bucketId).toBe("b-personal");
 });

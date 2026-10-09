@@ -4,20 +4,12 @@ import { isOverdue, overdueCounts, remaining, timeInRiffle, totalAge } from "../
 import type { ClosedTab, TrackedTab } from "../lib/lifecycle";
 import { isClosable, isQueuedUrl, remainingTime } from "../lib/lifecycle";
 import type { Bucket, Item, Pause, RiffleId } from "../lib/model";
-import { DAY, ENQUEUE_RIFFLES, HOUR, RIFFLES } from "../lib/model";
+import { DAY, ENQUEUE_RIFFLES, HOUR } from "../lib/model";
 import { runningPause } from "../lib/pauses";
 import type { WashTab } from "../lib/wash";
 import { tabsToWash, triageTabs } from "../lib/wash";
 
-/** One entry in the bucket switcher: a bucket's name, its overdue count and whether it's the one being shown. */
-export interface BucketSwitcherEntry {
-  id: string;
-  name: string;
-  overdueCount: number;
-  selected: boolean;
-}
-
-/** One item as the launcher displays it, independent of which column it's drawn into. */
+/** One item as the launcher displays it. */
 export interface ItemView {
   id: string;
   url: string;
@@ -30,12 +22,6 @@ export interface ItemView {
   overdue: boolean;
   bucketName: string;
   bucketId: string;
-}
-
-/** One riffle column, with its items already ordered per the column ordering rules. */
-export interface Column {
-  riffle: RiffleId;
-  items: ItemView[];
 }
 
 /**
@@ -83,10 +69,7 @@ export interface LauncherViewInput {
 }
 
 export interface LauncherView {
-  buckets: BucketSwitcherEntry[];
   selectedBucketId: string;
-  columns: Column[];
-  staleExpanded: boolean;
   pauseBanner: PauseBanner | null;
   awayGapBanner: AwayGapBanner | null;
   actionsEnabled: boolean;
@@ -136,28 +119,6 @@ function compareIds(a: string, b: string): number {
   if (a < b) return -1;
   if (a > b) return 1;
   return 0;
-}
-
-/**
- * Orders a column's entries: non-Stale riffles by ascending `remaining` (which puts overdue
- * items, with `remaining <= 0`, first and most-overdue-first automatically), Stale by
- * `riffleEnteredAt` descending; ties break by `queuedAt` ascending then `id`.
- */
-function sortColumn(riffle: RiffleId, entries: { item: Item; view: ItemView }[]): ItemView[] {
-  const sorted = [...entries].sort((a, b) => {
-    if (riffle === "stale") {
-      if (a.item.riffleEnteredAt !== b.item.riffleEnteredAt) {
-        return b.item.riffleEnteredAt - a.item.riffleEnteredAt;
-      }
-    } else {
-      const ar = a.view.remaining as number;
-      const br = b.view.remaining as number;
-      if (ar !== br) return ar - br;
-    }
-    if (a.item.queuedAt !== b.item.queuedAt) return a.item.queuedAt - b.item.queuedAt;
-    return compareIds(a.item.id, b.item.id);
-  });
-  return sorted.map((e) => e.view);
 }
 
 function matchesQuery(item: Item, needle: string): boolean {
@@ -243,9 +204,9 @@ function buildSearchResults(
 }
 
 /**
- * The launcher's full view: the bucket switcher, the five ladder columns for the effective
- * selected bucket (or, with an active search, matches across every bucket), the pause and
- * away-gap banners, and whether item actions are currently allowed.
+ * The launcher's full view: the bucket row (real buckets plus the Stale entry), the selected
+ * bucket's single queue, the cross-bucket Stale view, search results, the pause and away-gap
+ * banners, and whether item actions are currently allowed.
  */
 export function launcherView(input: LauncherViewInput): LauncherView {
   const { buckets, items, pauses, awayGap, selectedBucketId, query, now } = input;
@@ -258,33 +219,8 @@ export function launcherView(input: LauncherViewInput): LauncherView {
       ? selectedBucketId
       : (bucketsByOrder[0]?.id ?? "");
 
-  const bucketSwitcher: BucketSwitcherEntry[] = bucketsByOrder.map((bucket) => ({
-    id: bucket.id,
-    name: bucket.name,
-    overdueCount: counts.byBucket[bucket.id] ?? 0,
-    selected: bucket.id === effectiveSelectedBucketId,
-  }));
-
   const bucketNameById = new Map(buckets.map((b) => [b.id, b.name]));
   const trimmedQuery = query.trim().toLowerCase();
-  const searching = trimmedQuery !== "";
-
-  const matching = searching
-    ? items.filter((item) => matchesQuery(item, trimmedQuery))
-    : items.filter((item) => item.bucketId === effectiveSelectedBucketId);
-
-  const byRiffle = new Map<RiffleId, { item: Item; view: ItemView }[]>();
-  for (const riffle of RIFFLES) byRiffle.set(riffle, []);
-  for (const item of matching) {
-    const bucketName = bucketNameById.get(item.bucketId) ?? "";
-    const view = toItemView(item, bucketName, pauses, now);
-    byRiffle.get(item.riffle)?.push({ item, view });
-  }
-
-  const columns: Column[] = RIFFLES.map((riffle) => ({
-    riffle,
-    items: sortColumn(riffle, byRiffle.get(riffle) ?? []),
-  }));
 
   const running = runningPause(pauses, now);
   const pauseBanner: PauseBanner | null = running !== undefined ? { start: running.start } : null;
@@ -318,10 +254,7 @@ export function launcherView(input: LauncherViewInput): LauncherView {
   const searchResults = buildSearchResults(items, trimmedQuery, bucketNameById, pauses, now);
 
   return {
-    buckets: bucketSwitcher,
     selectedBucketId: effectiveSelectedBucketId,
-    columns,
-    staleExpanded: searching,
     pauseBanner,
     awayGapBanner,
     actionsEnabled: awayGap === null,
@@ -351,8 +284,6 @@ export function dueLabel(remaining: number | null): string {
 export type KeyAction =
   | "nextItem"
   | "prevItem"
-  | "nextColumn"
-  | "prevColumn"
   | "open"
   | "defer"
   | "move"
@@ -368,10 +299,6 @@ const KEY_ACTIONS: Record<string, KeyAction> = {
   j: "nextItem",
   ArrowUp: "prevItem",
   k: "prevItem",
-  ArrowRight: "nextColumn",
-  l: "nextColumn",
-  ArrowLeft: "prevColumn",
-  h: "prevColumn",
   Enter: "open",
   o: "open",
   d: "defer",

@@ -1,7 +1,7 @@
 // New tab page: the launcher. See "Surfaces > New tab page" in docs/design.md.
 // All ordering and grouping decisions live in ./model; this file only renders
-// DOM, holds page state (the selected bucket, search query and Stale's
-// expanded/collapsed state) and wires store actions to mouse events.
+// DOM, holds page state (the selected bucket and search query) and wires
+// store actions to mouse events.
 import type { AwayGap } from "../lib/away";
 import type { ClosedTab, TrackedTab } from "../lib/lifecycle";
 import type { Bucket, Item, Pause, RiffleId } from "../lib/model";
@@ -9,15 +9,16 @@ import { ENQUEUE_RIFFLES, RIFFLES } from "../lib/model";
 import { createStore } from "../lib/store";
 import type { WashTab } from "../lib/wash";
 import { WASH_MESSAGE_TYPE } from "../lib/wash";
-import { dueLabel, formatDuration, keyAction, launcherView, openTabsView, recentlyClosedView, triageView } from "./model";
+import { formatDuration, keyAction, launcherView, openTabsView, recentlyClosedView, triageView } from "./model";
 import type {
   AwayGapBanner,
-  Column,
   ItemView,
   KeyAction,
   LauncherView,
   OpenTabRow,
   PauseBanner,
+  QueueEntry,
+  SwitcherEntry,
   TabCue,
   TriageRow,
   TriageView,
@@ -48,7 +49,6 @@ interface PageState {
   recentlyClosed: ClosedTab[];
   selectedBucketId: string | null;
   query: string;
-  staleExpanded: boolean;
   searchFocused: boolean;
   message: string | null;
 }
@@ -78,7 +78,6 @@ async function loadData(): Promise<void> {
       recentlyClosed,
       selectedBucketId: null,
       query: "",
-      staleExpanded: false,
       searchFocused: false,
       message: null,
     };
@@ -138,7 +137,8 @@ function renderFavicon(favIconUrl: string | undefined): HTMLElement {
   return placeholder;
 }
 
-function renderItemCard(item: ItemView, riffle: RiffleId, view: LauncherView, searching: boolean): HTMLElement {
+/** One entry card: an item plus its riffle and due label. `showBucketName` is true for the Stale view and search results. */
+function renderItemCard(item: QueueEntry, view: LauncherView, showBucketName: boolean): HTMLElement {
   const card = document.createElement("div");
   card.className = item.overdue ? "item-card overdue" : "item-card";
   card.dataset.itemId = item.id;
@@ -158,9 +158,15 @@ function renderItemCard(item: ItemView, riffle: RiffleId, view: LauncherView, se
     void openItem(item);
   });
   header.append(titleLink);
+
+  const riffleLabel = document.createElement("span");
+  riffleLabel.className = "item-riffle";
+  riffleLabel.textContent = item.riffle;
+  header.append(riffleLabel);
+
   card.append(header);
 
-  if (searching) {
+  if (showBucketName) {
     const bucketLabel = document.createElement("span");
     bucketLabel.className = "item-bucket";
     bucketLabel.textContent = item.bucketName;
@@ -177,11 +183,10 @@ function renderItemCard(item: ItemView, riffle: RiffleId, view: LauncherView, se
   meta.textContent = `In riffle ${formatDuration(item.timeInRiffle)} · Age ${formatDuration(item.totalAge)}`;
   card.append(meta);
 
-  const due = dueLabel(item.remaining);
-  if (due !== "") {
+  if (item.dueLabel !== "") {
     const dueEl = document.createElement("span");
     dueEl.className = "item-due";
-    dueEl.textContent = due;
+    dueEl.textContent = item.dueLabel;
     card.append(dueEl);
   }
 
@@ -215,7 +220,7 @@ function renderItemCard(item: ItemView, riffle: RiffleId, view: LauncherView, se
     optionEl.textContent = option;
     moveSelect.append(optionEl);
   }
-  moveSelect.value = riffle;
+  moveSelect.value = item.riffle;
   moveSelect.addEventListener("change", () => {
     if (!actionsEnabled()) return;
     void runAction(() => store.moveItem(item.id, moveSelect.value as RiffleId));
@@ -226,7 +231,8 @@ function renderItemCard(item: ItemView, riffle: RiffleId, view: LauncherView, se
   bucketSelect.className = "bucket-select";
   bucketSelect.setAttribute("aria-label", `Change bucket for ${item.title}`);
   bucketSelect.disabled = !view.actionsEnabled;
-  for (const bucket of view.buckets) {
+  for (const bucket of view.switcher) {
+    if (bucket.isStale) continue;
     const optionEl = document.createElement("option");
     optionEl.value = bucket.id;
     optionEl.textContent = bucket.name;
@@ -253,38 +259,21 @@ function renderItemCard(item: ItemView, riffle: RiffleId, view: LauncherView, se
   return card;
 }
 
-function renderColumn(column: Column, view: LauncherView, searching: boolean): HTMLElement {
+/** The single queue, Stale view or search results: one list of item cards, with an empty-state message when it has none. */
+function renderQueueSection(entries: QueueEntry[], view: LauncherView, showBucketName: boolean, emptyMessage: string): HTMLElement {
   const section = document.createElement("section");
-  section.className = "column";
-  section.dataset.riffle = column.riffle;
+  section.className = "queue-section";
 
-  if (column.riffle === "stale") {
-    const expanded = searching || (state?.staleExpanded ?? false);
-    const header = document.createElement("button");
-    header.type = "button";
-    header.className = "stale-header";
-    header.textContent = `Stale (${column.items.length})`;
-    header.setAttribute("aria-expanded", String(expanded));
-    header.addEventListener("click", () => {
-      if (state === null) return;
-      state.staleExpanded = !state.staleExpanded;
-      render();
-    });
-    section.append(header);
-    if (expanded) {
-      const list = document.createElement("div");
-      list.className = "item-list";
-      for (const item of column.items) list.append(renderItemCard(item, column.riffle, view, searching));
-      section.append(list);
-    }
-  } else {
-    const heading = document.createElement("h2");
-    heading.textContent = column.riffle;
-    section.append(heading);
-    const list = document.createElement("div");
-    list.className = "item-list";
-    for (const item of column.items) list.append(renderItemCard(item, column.riffle, view, searching));
-    section.append(list);
+  const list = document.createElement("div");
+  list.className = "item-list";
+  for (const item of entries) list.append(renderItemCard(item, view, showBucketName));
+  section.append(list);
+
+  if (entries.length === 0) {
+    const empty = document.createElement("p");
+    empty.className = "empty-state";
+    empty.textContent = emptyMessage;
+    section.append(empty);
   }
 
   return section;
@@ -293,15 +282,18 @@ function renderColumn(column: Column, view: LauncherView, searching: boolean): H
 function renderBucketSwitcher(view: LauncherView): HTMLElement {
   const nav = document.createElement("nav");
   nav.className = "bucket-switcher";
-  for (const bucket of view.buckets) {
+  for (const entry of view.switcher) {
     const button = document.createElement("button");
     button.type = "button";
-    button.className = bucket.selected ? "bucket-button selected" : "bucket-button";
-    button.textContent = `${bucket.name} (${bucket.overdueCount})`;
-    button.setAttribute("aria-pressed", String(bucket.selected));
+    const classes = ["bucket-button"];
+    if (entry.isStale) classes.push("stale");
+    if (entry.selected) classes.push("selected");
+    button.className = classes.join(" ");
+    button.textContent = `${entry.name} (${entry.count})`;
+    button.setAttribute("aria-pressed", String(entry.selected));
     button.addEventListener("click", () => {
       if (state === null) return;
-      state.selectedBucketId = bucket.id;
+      state.selectedBucketId = entry.id;
       render();
     });
     nav.append(button);
@@ -574,10 +566,9 @@ function renderRecentlyClosedPanel(entries: ClosedTab[], buckets: Bucket[]): HTM
   return section;
 }
 
-/** The focused item card's id, column and index within it, so a re-render can restore focus. */
+/** The focused item card's id and index within the displayed list, so a re-render can restore focus. */
 interface FocusedCardInfo {
   itemId: string;
-  riffle: string;
   index: number;
 }
 
@@ -589,31 +580,24 @@ function captureFocusedCardInfo(): FocusedCardInfo | null {
   if (card === null) return null;
   const itemId = card.dataset.itemId;
   if (itemId === undefined) return null;
-  const column = card.closest<HTMLElement>(".column");
-  const riffle = column?.dataset.riffle;
-  if (riffle === undefined) return null;
-  const siblings = card.parentElement !== null ? Array.from(card.parentElement.children) : [];
-  return { itemId, riffle, index: siblings.indexOf(card) };
+  const cards = Array.from(app.querySelectorAll<HTMLElement>(".item-card"));
+  return { itemId, index: cards.indexOf(card) };
 }
 
 /**
  * Restores focus after a render: the same item id if it's still visible, otherwise the item at
- * the nearest index in the same column, otherwise focus is left alone.
+ * the nearest index in the displayed list, otherwise focus is left alone.
  */
 function restoreFocusedCard(info: FocusedCardInfo | null): void {
   if (info === null) return;
   const cards = Array.from(app.querySelectorAll<HTMLElement>(".item-card"));
+  if (cards.length === 0) return;
   const exact = cards.find((card) => card.dataset.itemId === info.itemId);
   if (exact !== undefined) {
     exact.focus();
     return;
   }
-  const column = Array.from(app.querySelectorAll<HTMLElement>(".column")).find(
-    (section) => section.dataset.riffle === info.riffle,
-  );
-  const columnCards = column !== undefined ? Array.from(column.querySelectorAll<HTMLElement>(".item-card")) : [];
-  if (columnCards.length === 0) return;
-  columnCards[Math.min(info.index, columnCards.length - 1)]!.focus();
+  cards[Math.min(info.index, cards.length - 1)]!.focus();
 }
 
 function render(): void {
@@ -642,7 +626,6 @@ function render(): void {
     now: Date.now(),
   });
   currentView = view;
-  const searching = view.staleExpanded;
 
   if (state.message !== null) {
     const messageEl = document.createElement("p");
@@ -660,10 +643,14 @@ function render(): void {
   settings.addEventListener("click", () => void runAction(() => browser.runtime.openOptionsPage()));
   header.append(heading, settings);
   app.append(header);
-  app.append(renderBucketSwitcher(view));
+
+  const topRow = document.createElement("div");
+  topRow.className = "top-row";
+  topRow.append(renderBucketSwitcher(view));
 
   const searchInput = renderSearch();
-  app.append(searchInput);
+  topRow.append(searchInput);
+  app.append(topRow);
   if (searchSelection !== null || state.searchFocused) {
     searchInput.focus();
     const pos = searchInput.value.length;
@@ -680,22 +667,36 @@ function render(): void {
   });
   app.append(renderOpenTabsPanel(openTabRows));
 
-  const closedEntries = recentlyClosedView({ recentlyClosed: state.recentlyClosed, items: state.items });
-  app.append(renderRecentlyClosedPanel(closedEntries, state.buckets));
-
-  const columns = document.createElement("div");
-  columns.className = "columns";
-  for (const column of view.columns) columns.append(renderColumn(column, view, searching));
-  app.append(columns);
-  if (view.columns.every((column) => column.items.length === 0)) {
-    const empty = document.createElement("p");
-    empty.className = "empty-state";
-    empty.textContent = searching ? "No queued items match your search." : "Nothing queued here yet. Use Alt+Shift+S or the toolbar button on a page to save it for later.";
-    app.append(empty);
+  const searching = state.query.trim() !== "";
+  let entries: QueueEntry[];
+  let showBucketName: boolean;
+  let emptyMessage: string;
+  if (searching) {
+    entries = view.searchResults;
+    showBucketName = true;
+    emptyMessage = "No items match your search.";
+  } else if (view.staleSelected) {
+    entries = view.staleItems;
+    showBucketName = true;
+    emptyMessage = "Nothing is Stale yet.";
+  } else {
+    entries = view.queue;
+    showBucketName = false;
+    emptyMessage = "Nothing queued here yet. Use Alt+Shift+S or the toolbar button on a page to save it for later.";
   }
+
+  const mainContent = document.createElement("div");
+  mainContent.className = "main-content";
+  mainContent.append(renderQueueSection(entries, view, showBucketName, emptyMessage));
+
+  const closedEntries = recentlyClosedView({ recentlyClosed: state.recentlyClosed, items: state.items });
+  mainContent.append(renderRecentlyClosedPanel(closedEntries, state.buckets));
+  app.append(mainContent);
+
   const help = document.createElement("p");
   help.className = "keyboard-help";
-  help.textContent = "Keyboard: / search · arrows or h j k l navigate cards · Enter open · d defer · m move · b change bucket · x resolve · [ ] switch buckets";
+  help.textContent =
+    "Keyboard: / search · ↑↓ or j k navigate items · Enter open · d defer · m move · b change bucket · x resolve · [ ] switch buckets";
   app.append(help);
 
   restoreFocusedCard(focusInfo);
@@ -712,17 +713,20 @@ function isSearchInput(target: EventTarget | null): boolean {
   return target instanceof HTMLInputElement && target.classList.contains("search-input");
 }
 
-function findItemViewById(id: string): ItemView | null {
-  if (currentView === null) return null;
-  for (const column of currentView.columns) {
-    const found = column.items.find((item) => item.id === id);
-    if (found !== undefined) return found;
-  }
-  return null;
+/** The currently displayed list: search results, the Stale view or the selected bucket's queue. */
+function currentEntries(): QueueEntry[] {
+  if (state === null || currentView === null) return [];
+  if (state.query.trim() !== "") return currentView.searchResults;
+  if (currentView.staleSelected) return currentView.staleItems;
+  return currentView.queue;
 }
 
-/** Moves focus to the previous/next item card within the same column. No-op at either end. */
-function moveFocusWithinColumn(card: HTMLElement, delta: number): void {
+function findItemViewById(id: string): QueueEntry | null {
+  return currentEntries().find((item) => item.id === id) ?? null;
+}
+
+/** Moves focus to the previous/next item card within the displayed list. No-op at either end. */
+function moveFocusInList(card: HTMLElement, delta: number): void {
   const list = card.parentElement;
   if (list === null) return;
   const cards = Array.from(list.children) as HTMLElement[];
@@ -731,34 +735,12 @@ function moveFocusWithinColumn(card: HTMLElement, delta: number): void {
   target?.focus();
 }
 
-/**
- * Moves focus to the item at the same index (or the last item) in the nearest column in the
- * given direction that has visible items, skipping empty columns and a collapsed Stale.
- */
-function moveFocusToColumn(card: HTMLElement, delta: number): void {
-  const list = card.parentElement;
-  const currentColumn = card.closest<HTMLElement>(".column");
-  if (list === null || currentColumn === null) return;
-  const cardsInColumn = Array.from(list.children) as HTMLElement[];
-  const indexInColumn = cardsInColumn.indexOf(card);
-
-  const columns = Array.from(app.querySelectorAll<HTMLElement>(".column"));
-  const columnIndex = columns.indexOf(currentColumn);
-
-  for (let i = columnIndex + delta; i >= 0 && i < columns.length; i += delta) {
-    const candidates = Array.from(columns[i]!.querySelectorAll<HTMLElement>(".item-card"));
-    if (candidates.length > 0) {
-      candidates[Math.min(indexInColumn, candidates.length - 1)]!.focus();
-      return;
-    }
-  }
-}
-
+/** Cycles the bucket row's selection, including the Stale entry, by `delta` positions. */
 function switchBucket(delta: number): void {
   if (state === null || currentView === null) return;
-  const buckets = currentView.buckets;
-  const index = buckets.findIndex((bucket) => bucket.selected);
-  const target = buckets[Math.min(Math.max(index + delta, 0), buckets.length - 1)];
+  const entries: SwitcherEntry[] = currentView.switcher;
+  const index = entries.findIndex((entry) => entry.selected);
+  const target = entries[Math.min(Math.max(index + delta, 0), entries.length - 1)];
   if (target === undefined || target.selected) return;
   state.selectedBucketId = target.id;
   render();
@@ -777,16 +759,10 @@ function dispatchCardAction(action: KeyAction, card: HTMLElement): void {
   if (itemId === undefined) return;
   switch (action) {
     case "nextItem":
-      moveFocusWithinColumn(card, 1);
+      moveFocusInList(card, 1);
       return;
     case "prevItem":
-      moveFocusWithinColumn(card, -1);
-      return;
-    case "nextColumn":
-      moveFocusToColumn(card, 1);
-      return;
-    case "prevColumn":
-      moveFocusToColumn(card, -1);
+      moveFocusInList(card, -1);
       return;
     case "open": {
       if (!actionsEnabled()) return;

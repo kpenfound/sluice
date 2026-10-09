@@ -40,11 +40,31 @@
         border-color: #333;
         font-weight: 700;
       }
+      .bucket-button.stale {
+        border-style: dashed;
+        font-style: italic;
+        color: #555;
+      }
+      .bucket-button.stale.selected {
+        border-color: #333;
+        background: #f4f1e8;
+      }
+      .top-row {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: flex-start;
+        justify-content: space-between;
+        gap: 0.75rem;
+        margin-bottom: 0.75rem;
+      }
+      .top-row .bucket-switcher {
+        flex: 1 1 auto;
+        margin-bottom: 0;
+      }
       .search-input {
         display: block;
         width: 100%;
         max-width: 24rem;
-        margin-bottom: 1rem;
         padding: 0.4rem 0.6rem;
         border: 1px solid #ccc;
         border-radius: 4px;
@@ -63,37 +83,17 @@
       .banner span {
         flex: 1 1 auto;
       }
-      .columns {
-        display: flex;
+      .main-content {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
         gap: 1rem;
-        align-items: flex-start;
+        align-items: start;
       }
-      .column {
-        flex: 1;
-        min-width: 0;
+      .queue-section {
         background: #fff;
         border: 1px solid #e0e0e0;
         border-radius: 4px;
         padding: 0.5rem;
-      }
-      .column h2 {
-        font-size: 0.85rem;
-        text-transform: uppercase;
-        letter-spacing: 0.04em;
-        color: #666;
-        margin: 0 0 0.5rem;
-      }
-      .stale-header {
-        width: 100%;
-        text-align: left;
-        font-size: 0.85rem;
-        text-transform: uppercase;
-        letter-spacing: 0.04em;
-        color: #666;
-        background: none;
-        border: none;
-        padding: 0 0 0.5rem;
-        cursor: pointer;
       }
       .item-list {
         display: flex;
@@ -133,6 +133,8 @@
         font-weight: 600;
         color: inherit;
         text-decoration: none;
+        flex: 1 1 auto;
+        min-width: 0;
       }
       .item-title:hover {
         text-decoration: underline;
@@ -141,6 +143,16 @@
         pointer-events: none;
         opacity: 0.5;
         cursor: default;
+      }
+      .item-riffle {
+        flex: none;
+        font-size: 0.75rem;
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+        color: #666;
+        background: #eee;
+        border-radius: 3px;
+        padding: 0.1rem 0.4rem;
       }
       .item-bucket,
       .item-domain,
@@ -360,9 +372,8 @@
       .item-title, .item-domain { overflow-wrap: anywhere; }
       .open-tab-row { flex-wrap: wrap; }
       .item-actions select { min-width: 0; max-width: 100%; }
-      @media (max-width: 1100px) {
-        .columns { flex-wrap: wrap; }
-        .column { flex: 1 1 16rem; }
+      @media (max-width: 900px) {
+        .main-content { grid-template-columns: 1fr; }
       }
       @media (prefers-color-scheme: dark) {
         :root {

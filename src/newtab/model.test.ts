@@ -10,6 +10,7 @@ import {
   keyAction,
   launcherView,
   openTabsView,
+  recentlyClosedPanelView,
   recentlyClosedView,
   STALE_SELECTION_ID,
   triageView,
@@ -593,6 +594,30 @@ describe("recentlyClosedView", () => {
     ];
     const view = recentlyClosedView({ recentlyClosed: entries, items });
     expect(view.map((e) => e.id)).toEqual(["not-queued"]);
+  });
+});
+
+describe("recentlyClosedPanelView", () => {
+  const entries = [
+    makeClosedTab({ id: "a", url: "https://a.example/1" }),
+    makeClosedTab({ id: "b", url: "https://b.example/2" }),
+  ];
+
+  test("collapsed: no entries are handed to the renderer, but the count is still available", () => {
+    const panel = recentlyClosedPanelView(entries, false);
+    expect(panel.entries).toEqual([]);
+    expect(panel.count).toBe(2);
+  });
+
+  test("expanded: every entry passes through unchanged, in order", () => {
+    const panel = recentlyClosedPanelView(entries, true);
+    expect(panel.entries).toBe(entries);
+    expect(panel.count).toBe(2);
+  });
+
+  test("count reflects zero entries whether collapsed or expanded", () => {
+    expect(recentlyClosedPanelView([], false)).toEqual({ count: 0, entries: [] });
+    expect(recentlyClosedPanelView([], true)).toEqual({ count: 0, entries: [] });
   });
 });
 

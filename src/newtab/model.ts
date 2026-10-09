@@ -400,6 +400,21 @@ export function recentlyClosedView(input: RecentlyClosedViewInput): ClosedTab[] 
     .sort((a, b) => b.closedAt - a.closedAt);
 }
 
+/** What the "Recently closed" panel renders: the entry count always, and the rows only when expanded. */
+export interface RecentlyClosedPanelView {
+  count: number;
+  entries: ClosedTab[];
+}
+
+/**
+ * Collapses `entries` (already filtered and ordered by `recentlyClosedView`) to nothing but a
+ * count while the panel is collapsed, so no entry title, domain, URL, favicon or close time is
+ * ever handed to the renderer until the panel is expanded.
+ */
+export function recentlyClosedPanelView(entries: ClosedTab[], expanded: boolean): RecentlyClosedPanelView {
+  return { count: entries.length, entries: expanded ? entries : [] };
+}
+
 /** One row of the triage view's tab list. */
 export interface TriageRow {
   tabId: number;

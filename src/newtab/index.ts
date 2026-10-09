@@ -9,7 +9,15 @@ import { ENQUEUE_RIFFLES, RIFFLES } from "../lib/model";
 import { createStore } from "../lib/store";
 import type { WashTab } from "../lib/wash";
 import { WASH_MESSAGE_TYPE } from "../lib/wash";
-import { formatDuration, keyAction, launcherView, openTabsView, recentlyClosedView, triageView } from "./model";
+import {
+  formatDuration,
+  keyAction,
+  launcherView,
+  openTabsView,
+  recentlyClosedPanelView,
+  recentlyClosedView,
+  triageView,
+} from "./model";
 import type {
   AwayGapBanner,
   ItemView,
@@ -18,6 +26,7 @@ import type {
   OpenTabRow,
   PauseBanner,
   QueueEntry,
+  RecentlyClosedPanelView,
   SwitcherEntry,
   TabCue,
   TriageRow,
@@ -51,6 +60,13 @@ interface PageState {
   query: string;
   searchFocused: boolean;
   message: string | null;
+  /**
+   * Whether the Recently closed panel is expanded. Lives only in this page's own memory: set to
+   * false once, on the first load, and never touched again by loadData(), so it survives every
+   * later re-render but never persists past a reload or a new launcher tab (docs/design.md
+   * Amendment 9).
+   */
+  recentlyClosedExpanded: boolean;
 }
 
 // Null until the first read of buckets, items, pauses, awayGap, trackedTabs and autoCloseAfter
@@ -80,6 +96,7 @@ async function loadData(): Promise<void> {
       query: "",
       searchFocused: false,
       message: null,
+      recentlyClosedExpanded: false,
     };
   } else {
     state.buckets = buckets;
@@ -544,24 +561,53 @@ function renderClosedRow(entry: ClosedTab, buckets: Bucket[]): HTMLElement {
   return div;
 }
 
-function renderRecentlyClosedPanel(entries: ClosedTab[], buckets: Bucket[]): HTMLElement {
+/**
+ * The "Recently closed" panel: a heading and a native expand/collapse button, always. Collapsed
+ * (the default on every load, per docs/design.md Amendment 9), the list of rows is left out of
+ * the DOM entirely, so no entry title, domain, URL, favicon, close time or row control is ever
+ * rendered. The button toggles `state.recentlyClosedExpanded` and re-renders; its `aria-expanded`
+ * reflects the current state, and being a plain `<button>`, it keeps native Tab/Enter/Space
+ * behavior with no keymap change (`handleKeydown` ignores targets inside a button).
+ */
+function renderRecentlyClosedPanel(panel: RecentlyClosedPanelView, buckets: Bucket[], expanded: boolean): HTMLElement {
   const section = document.createElement("section");
   section.className = "recently-closed-panel";
 
+  const header = document.createElement("div");
+  header.className = "recently-closed-header";
+
   const heading = document.createElement("h2");
   heading.textContent = "Recently closed";
-  section.append(heading);
+  header.append(heading);
 
-  const list = document.createElement("div");
-  list.className = "closed-tabs-list";
-  for (const entry of entries) list.append(renderClosedRow(entry, buckets));
-  if (entries.length === 0) {
-    const empty = document.createElement("p");
-    empty.className = "keyboard-help";
-    empty.textContent = "Unqueued web tabs appear here after closing, for up to 7 days or 100 entries.";
-    list.append(empty);
+  const toggle = document.createElement("button");
+  toggle.type = "button";
+  toggle.className = "recently-closed-toggle";
+  toggle.setAttribute("aria-expanded", String(expanded));
+  toggle.setAttribute("aria-controls", "recently-closed-list");
+  toggle.textContent = expanded ? "Hide" : `Show (${panel.count})`;
+  toggle.addEventListener("click", () => {
+    if (state === null) return;
+    state.recentlyClosedExpanded = !state.recentlyClosedExpanded;
+    render();
+  });
+  header.append(toggle);
+
+  section.append(header);
+
+  if (expanded) {
+    const list = document.createElement("div");
+    list.className = "closed-tabs-list";
+    list.id = "recently-closed-list";
+    for (const entry of panel.entries) list.append(renderClosedRow(entry, buckets));
+    if (panel.entries.length === 0) {
+      const empty = document.createElement("p");
+      empty.className = "keyboard-help";
+      empty.textContent = "Unqueued web tabs appear here after closing, for up to 7 days or 100 entries.";
+      list.append(empty);
+    }
+    section.append(list);
   }
-  section.append(list);
 
   return section;
 }
@@ -690,7 +736,8 @@ function render(): void {
   mainContent.append(renderQueueSection(entries, view, showBucketName, emptyMessage));
 
   const closedEntries = recentlyClosedView({ recentlyClosed: state.recentlyClosed, items: state.items });
-  mainContent.append(renderRecentlyClosedPanel(closedEntries, state.buckets));
+  const closedPanel = recentlyClosedPanelView(closedEntries, state.recentlyClosedExpanded);
+  mainContent.append(renderRecentlyClosedPanel(closedPanel, state.buckets, state.recentlyClosedExpanded));
   app.append(mainContent);
 
   const help = document.createElement("p");

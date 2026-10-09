@@ -2,6 +2,7 @@ import { describe, expect, test } from "vitest";
 import {
   DAY,
   DEFAULT_BUCKET_NAMES,
+  ENQUEUE_RIFFLES,
   HOUR,
   isRiffleId,
   nextRiffle,
@@ -19,6 +20,12 @@ describe("HOUR and DAY", () => {
 describe("RIFFLES", () => {
   test("is the fixed ladder from 24h up to 1mo, ending in the untimed stale archive", () => {
     expect(RIFFLES).toEqual(["24h", "72h", "1w", "1mo", "stale"]);
+  });
+});
+
+describe("ENQUEUE_RIFFLES", () => {
+  test("is the timed ladder without stale, which is never an enqueue choice", () => {
+    expect(ENQUEUE_RIFFLES).toEqual(["24h", "72h", "1w", "1mo"]);
   });
 });
 

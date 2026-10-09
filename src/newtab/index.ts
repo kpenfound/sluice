@@ -5,7 +5,7 @@
 import type { AwayGap } from "../lib/away";
 import type { ClosedTab, TrackedTab } from "../lib/lifecycle";
 import type { Bucket, Item, Pause, RiffleId } from "../lib/model";
-import { RIFFLES } from "../lib/model";
+import { ENQUEUE_RIFFLES, RIFFLES } from "../lib/model";
 import { createStore } from "../lib/store";
 import type { WashTab } from "../lib/wash";
 import { WASH_MESSAGE_TYPE } from "../lib/wash";
@@ -523,7 +523,7 @@ function renderClosedRow(entry: ClosedTab, buckets: Bucket[]): HTMLElement {
   const riffleSelect = document.createElement("select");
   riffleSelect.className = "closed-riffle-select";
   riffleSelect.setAttribute("aria-label", `Riffle for ${entry.title}`);
-  for (const riffle of RIFFLES) {
+  for (const riffle of ENQUEUE_RIFFLES) {
     const option = document.createElement("option");
     option.value = riffle;
     option.textContent = riffle;

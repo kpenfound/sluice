@@ -159,7 +159,7 @@ describe("popupState", () => {
     expect(state.title).toBe("New page");
     expect(state.buckets.map((b) => b.id)).toEqual(["b-dagger", "b-personal", "b-side"]);
     expect(state.defaultRiffle).toBe("72h");
-    expect(state.riffles).toEqual(["24h", "72h", "1w", "1mo", "stale"]);
+    expect(state.riffles).toEqual(["24h", "72h", "1w", "1mo"]);
   });
 
   test("a tab differing only by fragment is queued, with the item's bucket name and riffle", () => {

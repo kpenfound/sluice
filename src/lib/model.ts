@@ -41,6 +41,9 @@ export const DAY = 24 * HOUR;
 /** The riffle ladder, from shortest to longest TTL, ending in the untimed "stale" archive. */
 export const RIFFLES: RiffleId[] = ["24h", "72h", "1w", "1mo", "stale"];
 
+/** The riffles offered when enqueuing a new item. Stale is never an enqueue choice. */
+export const ENQUEUE_RIFFLES: RiffleId[] = ["24h", "72h", "1w", "1mo"];
+
 /** Time to live for each timed riffle. "stale" has no TTL and no entry here. */
 export const TTL: Record<"24h" | "72h" | "1w" | "1mo", number> = {
   "24h": 24 * HOUR,

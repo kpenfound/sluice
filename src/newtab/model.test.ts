@@ -1,7 +1,7 @@
 import { describe, expect, test } from "vitest";
 import type { AwayGap } from "../lib/away";
 import type { ClosedTab, TrackedTab } from "../lib/lifecycle";
-import { HOUR, RIFFLES } from "../lib/model";
+import { DAY, HOUR, RIFFLES } from "../lib/model";
 import type { Bucket, Item, Pause } from "../lib/model";
 import type { WashTab } from "../lib/wash";
 import {
@@ -11,6 +11,7 @@ import {
   launcherView,
   openTabsView,
   recentlyClosedView,
+  STALE_SELECTION_ID,
   triageView,
 } from "./model";
 import type { LauncherViewInput } from "./model";
@@ -276,6 +277,186 @@ describe("launcherView: search", () => {
     expect(noQuery.staleExpanded).toBe(false);
     const withQuery = launcherView(baseInput({ query: "x" }));
     expect(withQuery.staleExpanded).toBe(true);
+  });
+});
+
+describe("launcherView: the single queue", () => {
+  test("holds only the selected bucket's 24h/72h/1w/1mo items, excluding Stale and other buckets", () => {
+    const items = [
+      makeItem({ id: "mine-24h", bucketId: "b-dagger", riffle: "24h" }),
+      makeItem({ id: "mine-1mo", bucketId: "b-dagger", riffle: "1mo" }),
+      makeItem({ id: "mine-stale", bucketId: "b-dagger", riffle: "stale" }),
+      makeItem({ id: "other-bucket", bucketId: "b-personal", riffle: "24h" }),
+    ];
+    const view = launcherView(baseInput({ items, selectedBucketId: "b-dagger" }));
+    expect(view.queue.map((i) => i.id).sort()).toEqual(["mine-1mo", "mine-24h"]);
+    expect(view.queue.some((i) => i.id === "mine-stale")).toBe(false);
+  });
+
+  test("orders by ascending remaining across riffles: overdue first, most overdue first", () => {
+    const items = [
+      // 72h TTL; remaining = TTL - elapsed
+      makeItem({ id: "soon-72h", riffle: "72h", riffleEnteredAt: NOW - 70 * HOUR }), // remaining 2h
+      // 1mo TTL
+      makeItem({ id: "later-1mo", riffle: "1mo", riffleEnteredAt: NOW - 10 * DAY }), // remaining ~20d
+      // 24h TTL, overdue
+      makeItem({ id: "very-overdue-24h", riffle: "24h", riffleEnteredAt: NOW - 100 * HOUR }), // remaining -76h
+      // 1w TTL, slightly overdue
+      makeItem({ id: "slightly-overdue-1w", riffle: "1w", riffleEnteredAt: NOW - 8 * DAY }), // remaining -1d
+    ];
+    const view = launcherView(baseInput({ items }));
+    expect(view.queue.map((i) => i.id)).toEqual([
+      "very-overdue-24h",
+      "slightly-overdue-1w",
+      "soon-72h",
+      "later-1mo",
+    ]);
+  });
+
+  test("ties on remaining (even across different riffles) break by queuedAt ascending, then id", () => {
+    const items = [
+      // 72h TTL, riffleEnteredAt NOW - 10h: remaining 62h
+      makeItem({
+        id: "b-newer",
+        riffle: "72h",
+        riffleEnteredAt: NOW - 10 * HOUR,
+        queuedAt: NOW - 5 * HOUR,
+      }),
+      makeItem({
+        id: "a-newer",
+        riffle: "72h",
+        riffleEnteredAt: NOW - 10 * HOUR,
+        queuedAt: NOW - 5 * HOUR,
+      }),
+      // 1w TTL, riffleEnteredAt NOW - 106h: remaining also 62h, but queued earlier
+      makeItem({
+        id: "older",
+        riffle: "1w",
+        riffleEnteredAt: NOW - 106 * HOUR,
+        queuedAt: NOW - 50 * HOUR,
+      }),
+    ];
+    const view = launcherView(baseInput({ items }));
+    expect(view.queue.map((i) => i.id)).toEqual(["older", "a-newer", "b-newer"]);
+  });
+
+  test("each entry carries its riffle alongside the usual item view fields", () => {
+    const item = makeItem({ id: "i1", riffle: "1mo", bucketId: "b-dagger" });
+    const view = launcherView(baseInput({ items: [item] }));
+    expect(view.queue[0]?.riffle).toBe("1mo");
+    expect(view.queue[0]?.bucketName).toBe("Dagger");
+    expect(view.queue[0]?.dueLabel).not.toBe("");
+  });
+});
+
+describe("launcherView: Stale entry and view", () => {
+  test("the switcher lists the real buckets by order, then a Stale entry with the Stale item count", () => {
+    const items = [
+      makeItem({ id: "s1", bucketId: "b-dagger", riffle: "stale" }),
+      makeItem({ id: "s2", bucketId: "b-personal", riffle: "stale" }),
+      makeItem({ id: "timed", bucketId: "b-dagger", riffle: "72h" }),
+    ];
+    const view = launcherView(baseInput({ items }));
+    expect(view.switcher.map((e) => e.id)).toEqual(["b-dagger", "b-personal", "b-side", STALE_SELECTION_ID]);
+    const staleEntry = view.switcher[view.switcher.length - 1]!;
+    expect(staleEntry.isStale).toBe(true);
+    expect(staleEntry.count).toBe(2);
+  });
+
+  test("selecting the Stale entry is reflected in staleSelected and the switcher's selection", () => {
+    const view = launcherView(baseInput({ selectedBucketId: STALE_SELECTION_ID }));
+    expect(view.staleSelected).toBe(true);
+    expect(view.switcher.every((e) => (e.isStale ? e.selected : !e.selected))).toBe(true);
+  });
+
+  test("staleItems lists every Stale item from every bucket, each with its bucket name", () => {
+    const items = [
+      makeItem({ id: "from-dagger", bucketId: "b-dagger", riffle: "stale", riffleEnteredAt: NOW - 10 * HOUR }),
+      makeItem({ id: "from-personal", bucketId: "b-personal", riffle: "stale", riffleEnteredAt: NOW - 5 * HOUR }),
+    ];
+    const view = launcherView(baseInput({ items, selectedBucketId: "b-dagger" }));
+    expect(view.staleItems.map((i) => i.id)).toEqual(["from-personal", "from-dagger"]);
+    expect(view.staleItems.map((i) => i.bucketName)).toEqual(["Personal", "Dagger"]);
+  });
+
+  test("staleItems orders by riffleEnteredAt descending, ties by queuedAt ascending then id", () => {
+    const items = [
+      makeItem({ id: "oldest", riffle: "stale", riffleEnteredAt: NOW - 100 * HOUR }),
+      makeItem({ id: "newest", riffle: "stale", riffleEnteredAt: NOW - 1 * HOUR }),
+      makeItem({
+        id: "tie-b",
+        riffle: "stale",
+        riffleEnteredAt: NOW - 50 * HOUR,
+        queuedAt: NOW - 5 * HOUR,
+      }),
+      makeItem({
+        id: "tie-a",
+        riffle: "stale",
+        riffleEnteredAt: NOW - 50 * HOUR,
+        queuedAt: NOW - 5 * HOUR,
+      }),
+    ];
+    const view = launcherView(baseInput({ items }));
+    expect(view.staleItems.map((i) => i.id)).toEqual(["newest", "tie-a", "tie-b", "oldest"]);
+  });
+
+  test("no Stale item ever appears in a bucket's queue, selected or not", () => {
+    const items = [
+      makeItem({ id: "stale-item", bucketId: "b-dagger", riffle: "stale" }),
+      makeItem({ id: "timed-item", bucketId: "b-dagger", riffle: "72h" }),
+    ];
+    const view = launcherView(baseInput({ items, selectedBucketId: "b-dagger" }));
+    expect(view.queue.map((i) => i.id)).toEqual(["timed-item"]);
+  });
+});
+
+describe("launcherView: searchResults", () => {
+  test("spans every bucket and riffle, timed items first by soonest due, then Stale newest first", () => {
+    const items = [
+      makeItem({
+        id: "timed-later",
+        bucketId: "b-personal",
+        riffle: "1mo",
+        title: "widget later",
+        riffleEnteredAt: NOW - 1 * DAY,
+      }), // remaining ~29d
+      makeItem({
+        id: "timed-soon",
+        bucketId: "b-dagger",
+        riffle: "24h",
+        title: "widget soon",
+        riffleEnteredAt: NOW - 20 * HOUR,
+      }), // remaining 4h
+      makeItem({
+        id: "stale-newer",
+        bucketId: "b-side",
+        riffle: "stale",
+        title: "widget stale newer",
+        riffleEnteredAt: NOW - 1 * HOUR,
+      }),
+      makeItem({
+        id: "stale-older",
+        bucketId: "b-dagger",
+        riffle: "stale",
+        title: "widget stale older",
+        riffleEnteredAt: NOW - 50 * HOUR,
+      }),
+      makeItem({ id: "no-match", bucketId: "b-dagger", riffle: "72h", title: "unrelated" }),
+    ];
+    const view = launcherView(baseInput({ items, query: "widget" }));
+    expect(view.searchResults.map((i) => i.id)).toEqual([
+      "timed-soon",
+      "timed-later",
+      "stale-newer",
+      "stale-older",
+    ]);
+    expect(view.searchResults.map((i) => i.bucketName)).toEqual(["Dagger", "Personal", "Side projects", "Dagger"]);
+  });
+
+  test("is empty for a blank or whitespace-only query", () => {
+    const items = [makeItem({ id: "i1" })];
+    expect(launcherView(baseInput({ items, query: "" })).searchResults).toEqual([]);
+    expect(launcherView(baseInput({ items, query: "   " })).searchResults).toEqual([]);
   });
 });
 
@@ -790,7 +971,7 @@ describe("triageView: buckets and riffles", () => {
     expect(view.buckets.map((b) => b.id)).toEqual(["b-dagger", "b-personal", "b-side"]);
   });
 
-  test("riffles is RIFFLES", () => {
+  test("riffles is the enqueue ladder, without Stale", () => {
     const view = triageView({
       tabs: [],
       trackedTabs: [],
@@ -799,7 +980,7 @@ describe("triageView: buckets and riffles", () => {
       lastBucketId: null,
       selfTabId: null,
     });
-    expect(view.riffles).toEqual(RIFFLES);
+    expect(view.riffles).toEqual(["24h", "72h", "1w", "1mo"]);
   });
 });
 

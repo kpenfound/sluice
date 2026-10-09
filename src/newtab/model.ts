@@ -4,7 +4,7 @@ import { isOverdue, overdueCounts, remaining, timeInRiffle, totalAge } from "../
 import type { ClosedTab, TrackedTab } from "../lib/lifecycle";
 import { isClosable, isQueuedUrl, remainingTime } from "../lib/lifecycle";
 import type { Bucket, Item, Pause, RiffleId } from "../lib/model";
-import { DAY, HOUR, RIFFLES } from "../lib/model";
+import { DAY, ENQUEUE_RIFFLES, HOUR, RIFFLES } from "../lib/model";
 import { runningPause } from "../lib/pauses";
 import type { WashTab } from "../lib/wash";
 import { tabsToWash, triageTabs } from "../lib/wash";
@@ -38,6 +38,28 @@ export interface Column {
   items: ItemView[];
 }
 
+/**
+ * The selection value that asks for the Stale view instead of a bucket's queue. Kept out of
+ * the bucket id space so it never collides with a real bucket id.
+ */
+export const STALE_SELECTION_ID = "sluice:stale-view";
+
+/** One entry in the single queue, the Stale view or search results: an item plus its riffle and due label. */
+export interface QueueEntry extends ItemView {
+  riffle: RiffleId;
+  dueLabel: string;
+}
+
+/** One entry in the bucket row: a real bucket, or the Stale archive entry that always comes last. */
+export interface SwitcherEntry {
+  id: string;
+  name: string;
+  /** An overdue count for a bucket entry, or the total Stale item count for the Stale entry. */
+  count: number;
+  selected: boolean;
+  isStale: boolean;
+}
+
 /** The running pause's start, shown in the pause banner. */
 export interface PauseBanner {
   start: number;
@@ -68,6 +90,22 @@ export interface LauncherView {
   pauseBanner: PauseBanner | null;
   awayGapBanner: AwayGapBanner | null;
   actionsEnabled: boolean;
+  /**
+   * The bucket row, including the Stale entry after the real buckets. `switcher`'s selected
+   * entry reflects whether `selectedBucketId` named a real bucket or `STALE_SELECTION_ID`.
+   */
+  switcher: SwitcherEntry[];
+  /** True when `STALE_SELECTION_ID` is the input's selection. */
+  staleSelected: boolean;
+  /**
+   * The selected bucket's single queue: its 24h/72h/1w/1mo items, soonest due first. Always
+   * computed for `selectedBucketId`; render it only when neither Stale nor search is active.
+   */
+  queue: QueueEntry[];
+  /** Every Stale item across every bucket, newest into Stale first. Always computed, regardless of selection. */
+  staleItems: QueueEntry[];
+  /** Matches across every bucket and riffle: timed items by soonest due, then Stale newest first. Empty with no query. */
+  searchResults: QueueEntry[];
 }
 
 function domainOf(url: string): string {
@@ -126,6 +164,84 @@ function matchesQuery(item: Item, needle: string): boolean {
   return item.title.toLowerCase().includes(needle) || item.url.toLowerCase().includes(needle);
 }
 
+function toQueueEntry(item: Item, bucketName: string, pauses: Pause[], now: number): QueueEntry {
+  const view = toItemView(item, bucketName, pauses, now);
+  return { ...view, riffle: item.riffle, dueLabel: dueLabel(view.remaining) };
+}
+
+/** Ascending `remaining`, then `queuedAt` ascending, then id: soonest due first, most overdue first. */
+function compareSoonestDue(a: Item, b: Item, aRemaining: number, bRemaining: number): number {
+  if (aRemaining !== bRemaining) return aRemaining - bRemaining;
+  if (a.queuedAt !== b.queuedAt) return a.queuedAt - b.queuedAt;
+  return compareIds(a.id, b.id);
+}
+
+/** Descending `riffleEnteredAt`, then `queuedAt` ascending, then id: newest into Stale first. */
+function compareNewestIntoStale(a: Item, b: Item): number {
+  if (a.riffleEnteredAt !== b.riffleEnteredAt) return b.riffleEnteredAt - a.riffleEnteredAt;
+  if (a.queuedAt !== b.queuedAt) return a.queuedAt - b.queuedAt;
+  return compareIds(a.id, b.id);
+}
+
+/**
+ * The selected bucket's single queue: its 24h/72h/1w/1mo items (never Stale), ordered by
+ * ascending `remaining`, then `queuedAt`, then id.
+ */
+function buildQueue(
+  items: Item[],
+  bucketId: string,
+  bucketNameById: Map<string, string>,
+  pauses: Pause[],
+  now: number,
+): QueueEntry[] {
+  const entries = items
+    .filter((item) => item.bucketId === bucketId && item.riffle !== "stale")
+    .map((item) => ({ item, entry: toQueueEntry(item, bucketNameById.get(item.bucketId) ?? "", pauses, now) }));
+  entries.sort((a, b) => compareSoonestDue(a.item, b.item, a.entry.remaining as number, b.entry.remaining as number));
+  return entries.map((e) => e.entry);
+}
+
+/** Every Stale item across every bucket, newest into Stale first, each carrying its bucket name. */
+function buildStaleItems(
+  items: Item[],
+  bucketNameById: Map<string, string>,
+  pauses: Pause[],
+  now: number,
+): QueueEntry[] {
+  const entries = items
+    .filter((item) => item.riffle === "stale")
+    .map((item) => ({ item, entry: toQueueEntry(item, bucketNameById.get(item.bucketId) ?? "", pauses, now) }));
+  entries.sort((a, b) => compareNewestIntoStale(a.item, b.item));
+  return entries.map((e) => e.entry);
+}
+
+/**
+ * Search results across every bucket and riffle, as one list: timed items first by soonest
+ * due, then Stale items newest into Stale first. Empty for a blank query.
+ */
+function buildSearchResults(
+  items: Item[],
+  trimmedQuery: string,
+  bucketNameById: Map<string, string>,
+  pauses: Pause[],
+  now: number,
+): QueueEntry[] {
+  if (trimmedQuery === "") return [];
+  const matches = items.filter((item) => matchesQuery(item, trimmedQuery));
+
+  const timed = matches
+    .filter((item) => item.riffle !== "stale")
+    .map((item) => ({ item, entry: toQueueEntry(item, bucketNameById.get(item.bucketId) ?? "", pauses, now) }));
+  timed.sort((a, b) => compareSoonestDue(a.item, b.item, a.entry.remaining as number, b.entry.remaining as number));
+
+  const stale = matches
+    .filter((item) => item.riffle === "stale")
+    .map((item) => ({ item, entry: toQueueEntry(item, bucketNameById.get(item.bucketId) ?? "", pauses, now) }));
+  stale.sort((a, b) => compareNewestIntoStale(a.item, b.item));
+
+  return [...timed.map((e) => e.entry), ...stale.map((e) => e.entry)];
+}
+
 /**
  * The launcher's full view: the bucket switcher, the five ladder columns for the effective
  * selected bucket (or, with an active search, matches across every bucket), the pause and
@@ -178,6 +294,29 @@ export function launcherView(input: LauncherViewInput): LauncherView {
       ? { start: awayGap.start, end: awayGap.end, freed: itemsFreedByGap(items, pauses, awayGap, now) }
       : null;
 
+  const staleSelected = selectedBucketId === STALE_SELECTION_ID;
+  const staleItems = buildStaleItems(items, bucketNameById, pauses, now);
+
+  const switcher: SwitcherEntry[] = [
+    ...bucketsByOrder.map((bucket) => ({
+      id: bucket.id,
+      name: bucket.name,
+      count: counts.byBucket[bucket.id] ?? 0,
+      selected: !staleSelected && bucket.id === effectiveSelectedBucketId,
+      isStale: false,
+    })),
+    {
+      id: STALE_SELECTION_ID,
+      name: "Stale",
+      count: staleItems.length,
+      selected: staleSelected,
+      isStale: true,
+    },
+  ];
+
+  const queue = buildQueue(items, effectiveSelectedBucketId, bucketNameById, pauses, now);
+  const searchResults = buildSearchResults(items, trimmedQuery, bucketNameById, pauses, now);
+
   return {
     buckets: bucketSwitcher,
     selectedBucketId: effectiveSelectedBucketId,
@@ -186,6 +325,11 @@ export function launcherView(input: LauncherViewInput): LauncherView {
     pauseBanner,
     awayGapBanner,
     actionsEnabled: awayGap === null,
+    switcher,
+    staleSelected,
+    queue,
+    staleItems,
+    searchResults,
   };
 }
 
@@ -384,7 +528,7 @@ export function triageView(input: TriageViewInput): TriageView {
     rows,
     buckets: bucketsByOrder,
     defaultBucketId,
-    riffles: RIFFLES,
+    riffles: ENQUEUE_RIFFLES,
     closeCount,
   };
 }

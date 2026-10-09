@@ -1,5 +1,5 @@
 import type { Bucket, Item, Pause, RiffleId } from "../lib/model";
-import { RIFFLES } from "../lib/model";
+import { ENQUEUE_RIFFLES } from "../lib/model";
 import type { TrackedTab } from "../lib/lifecycle";
 import { normalize } from "../lib/normalize";
 import { runningPause } from "../lib/pauses";
@@ -114,7 +114,7 @@ export function popupState(input: PopupStateInput): PopupState {
     kind: "add",
     title: tab.title,
     buckets: bucketsByOrder,
-    riffles: RIFFLES,
+    riffles: ENQUEUE_RIFFLES,
     defaultRiffle: "72h",
     defaultBucketId: defaultBucketId(bucketsByOrder, lastBucketId),
     pause,

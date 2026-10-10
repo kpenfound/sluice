@@ -229,7 +229,7 @@ Sluice sets `chrome_url_overrides.newtab`, so every new tab opens the launcher.
 - A search box filters every bucket and every riffle, Stale included, as one list: timed items first by soonest due, then Stale items newest into Stale first, each showing its bucket name.
 - While a pause is running, a banner shows when it started and offers Resume. "Due in" times are frozen.
 - The away-gap banner from the Pause section appears here.
-- Layout, top to bottom: the page header and any inline message; a full-width row with the bucket switcher (including the Stale entry) and the search box; the pause and away-gap banners when they apply; the full-width Open tabs panel; then a two-half area with the queue (or the Stale view, or search results) on the left and Recently closed on the right. The halves may stack vertically on a narrow window, queue first.
+- Layout, top to bottom: the page header and any inline message; a full-width row with the bucket switcher (including the Stale entry) and the search box; the pause and away-gap banners when they apply; the full-width Open tabs panel; then a two-section area with the queue (or the Stale view, or search results) on the left at about one third of the width and Recently closed on the right at about two thirds. The sections may stack vertically on a narrow window, queue first.
 - The page follows the browser/system light or dark theme.
 
 Firefox asks me to confirm the new tab override the first time. Only one extension can own the new tab page at a time.

@@ -93,7 +93,7 @@ describe("new tab page dark-scheme support", () => {
 
     for (const selector of [
       "body",
-      ".column",
+      ".queue-section",
       ".open-tabs-panel",
       ".recently-closed-panel",
       ".triage-row",
@@ -177,7 +177,7 @@ describe("dark-mode colour distinctness and readability", () => {
   test("the pause/away-gap banner stays distinct from the panels around it and reads clearly", async () => {
     const dark = await darkModeBlock();
     const bannerBg = colorFor(dark, ".banner", "background");
-    const columnBg = colorFor(dark, ".column", "background");
+    const columnBg = colorFor(dark, ".queue-section", "background");
     expect(colorDistance(bannerBg, columnBg)).toBeGreaterThanOrEqual(DISTINCT_BACKGROUND);
 
     const bodyText = colorFor(dark, "body", "color");

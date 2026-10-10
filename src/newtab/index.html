@@ -14,14 +14,14 @@
         font-family: system-ui, sans-serif;
         margin: 0;
         padding: 1rem;
-        color: #1a1a1a;
-        background: #fafafa;
+        color: #16242a;
+        background: #f4f7f6;
       }
       .loading {
-        color: #666;
+        color: #4b6063;
       }
       .message {
-        color: #a4321e;
+        color: #7a4b00;
         font-weight: 600;
       }
       .bucket-switcher {
@@ -31,24 +31,31 @@
         margin-bottom: 0.75rem;
       }
       .bucket-button {
-        padding: 0.4rem 0.8rem;
-        border: 1px solid #ccc;
-        border-radius: 4px;
-        background: #fff;
+        padding: 0.4rem 1rem;
+        border: 1px solid #c7d3d2;
+        border-radius: 999px;
+        background: #ffffff;
+        color: #16242a;
         cursor: pointer;
       }
       .bucket-button.selected {
-        border-color: #333;
+        border-color: #087e83;
+        background: #e3f3f2;
+        color: #065458;
         font-weight: 700;
       }
       .bucket-button.stale {
         border-style: dashed;
+        border-color: #9c6b12;
+        border-radius: 999px;
         font-style: italic;
-        color: #555;
+        color: #7a4f12;
       }
       .bucket-button.stale.selected {
-        border-color: #333;
-        background: #f4f1e8;
+        border-color: #7a4b00;
+        border-radius: 999px;
+        background: #f7e8cf;
+        color: #5c3900;
       }
       .top-row {
         display: flex;
@@ -67,8 +74,18 @@
         width: 100%;
         max-width: 24rem;
         padding: 0.4rem 0.6rem;
-        border: 1px solid #ccc;
-        border-radius: 4px;
+        border: 1px solid #c7d3d2;
+        border-radius: 8px;
+        background: #ffffff;
+        color: #16242a;
+      }
+      button,
+      select,
+      input:not([type="checkbox"]) {
+        border: 1px solid #c7d3d2;
+        border-radius: 8px;
+        background: #ffffff;
+        color: #16242a;
       }
       .banner {
         display: flex;
@@ -77,9 +94,10 @@
         gap: 0.6rem;
         margin-bottom: 1rem;
         padding: 0.6rem 0.8rem;
-        border-radius: 4px;
-        border: 1px solid #c9c0a0;
-        background: #fff6dc;
+        border-radius: 10px;
+        border: 1px solid #d8ad5c;
+        background: #fdf0da;
+        color: #7a4b00;
       }
       .banner span {
         flex: 1 1 auto;
@@ -91,10 +109,10 @@
         align-items: start;
       }
       .queue-section {
-        background: #fff;
-        border: 1px solid #e0e0e0;
-        border-radius: 4px;
-        padding: 0.5rem;
+        background: #ffffff;
+        border: 1px solid #c7d3d2;
+        border-radius: 10px;
+        padding: 0.75rem;
       }
       .item-list {
         display: flex;
@@ -102,17 +120,17 @@
         gap: 0.5rem;
       }
       .item-card {
-        border: 1px solid #ddd;
-        border-radius: 4px;
-        padding: 0.5rem;
-        background: #fdfdfd;
+        border: 1px solid #c7d3d2;
+        border-radius: 10px;
+        padding: 0.6rem;
+        background: #ffffff;
       }
       .item-card.overdue {
-        border-color: #a4321e;
-        background: #fdece8;
+        border-color: #c67c1e;
+        background: #fbe8d2;
       }
       .item-card:focus {
-        outline: 2px solid #2563eb;
+        outline: 2px solid #087e83;
         outline-offset: 2px;
       }
       .item-header {
@@ -127,8 +145,8 @@
       }
       .favicon-placeholder {
         display: inline-block;
-        border-radius: 2px;
-        background: #ccc;
+        border-radius: 4px;
+        background: #c7d3d2;
       }
       .item-title {
         font-weight: 600;
@@ -150,10 +168,10 @@
         font-size: 0.75rem;
         text-transform: uppercase;
         letter-spacing: 0.04em;
-        color: #666;
-        background: #eee;
-        border-radius: 3px;
-        padding: 0.1rem 0.4rem;
+        color: #345254;
+        background: #e1e8e7;
+        border-radius: 999px;
+        padding: 0.15rem 0.55rem;
       }
       .item-bucket,
       .item-domain,
@@ -161,33 +179,33 @@
       .item-due {
         display: block;
         font-size: 0.8rem;
-        color: #666;
+        color: #4b6063;
       }
       .item-due {
         font-weight: 600;
-        color: #333;
+        color: #16242a;
       }
       .item-card.overdue .item-due {
-        color: #a4321e;
+        color: #7a4b00;
       }
       .item-actions {
         display: flex;
         flex-wrap: wrap;
         gap: 0.4rem;
-        margin-top: 0.4rem;
+        margin-top: 0.5rem;
       }
       .open-tabs-panel {
         margin-bottom: 1rem;
-        background: #fff;
-        border: 1px solid #e0e0e0;
-        border-radius: 4px;
-        padding: 0.5rem 0.75rem;
+        background: #ffffff;
+        border: 1px solid #c7d3d2;
+        border-radius: 10px;
+        padding: 0.75rem 0.9rem;
       }
       .open-tabs-panel h2 {
         font-size: 0.85rem;
         text-transform: uppercase;
         letter-spacing: 0.04em;
-        color: #666;
+        color: #4b6063;
         margin: 0 0 0.5rem;
       }
       .open-tabs-header {
@@ -200,11 +218,11 @@
         margin: 0;
       }
       .wash-now-button {
-        padding: 0.3rem 0.7rem;
-        border: 1px solid #a4321e;
-        border-radius: 4px;
-        background: #fff;
-        color: #a4321e;
+        padding: 0.35rem 0.9rem;
+        border: 1px solid #b3261e;
+        border-radius: 8px;
+        background: #ffffff;
+        color: #b3261e;
         font-weight: 600;
         cursor: pointer;
         margin-bottom: 0.5rem;
@@ -218,8 +236,8 @@
         display: flex;
         align-items: center;
         gap: 0.5rem;
-        padding: 0.3rem 0;
-        border-bottom: 1px solid #eee;
+        padding: 0.4rem 0;
+        border-bottom: 1px solid #e1e8e7;
       }
       .open-tab-row:last-child {
         border-bottom: none;
@@ -234,13 +252,13 @@
       }
       .open-tab-domain {
         font-size: 0.8rem;
-        color: #666;
+        color: #4b6063;
         flex: none;
       }
       .open-tab-cue {
         font-size: 0.8rem;
         font-weight: 600;
-        color: #333;
+        color: #16242a;
         flex: none;
       }
       .open-tab-keep-open {
@@ -248,21 +266,21 @@
         align-items: center;
         gap: 0.3rem;
         font-size: 0.8rem;
-        color: #666;
+        color: #4b6063;
         flex: none;
       }
       .recently-closed-panel {
         margin-bottom: 1rem;
-        background: #fff;
-        border: 1px solid #e0e0e0;
-        border-radius: 4px;
-        padding: 0.5rem 0.75rem;
+        background: #ffffff;
+        border: 1px solid #c7d3d2;
+        border-radius: 10px;
+        padding: 0.75rem 0.9rem;
       }
       .recently-closed-panel h2 {
         font-size: 0.85rem;
         text-transform: uppercase;
         letter-spacing: 0.04em;
-        color: #666;
+        color: #4b6063;
         margin: 0 0 0.5rem;
       }
       .recently-closed-header {
@@ -276,10 +294,11 @@
         margin: 0;
       }
       .recently-closed-toggle {
-        padding: 0.25rem 0.6rem;
-        border: 1px solid #ccc;
-        border-radius: 4px;
-        background: #fff;
+        padding: 0.3rem 0.8rem;
+        border: 1px solid #c7d3d2;
+        border-radius: 999px;
+        background: #ffffff;
+        color: #16242a;
         font-size: 0.8rem;
         cursor: pointer;
       }
@@ -293,8 +312,8 @@
         align-items: center;
         flex-wrap: wrap;
         gap: 0.5rem;
-        padding: 0.3rem 0;
-        border-bottom: 1px solid #eee;
+        padding: 0.4rem 0;
+        border-bottom: 1px solid #e1e8e7;
       }
       .closed-tab-row:last-child {
         border-bottom: none;
@@ -310,7 +329,7 @@
       .closed-tab-domain,
       .closed-tab-time {
         font-size: 0.8rem;
-        color: #666;
+        color: #4b6063;
         flex: none;
       }
       .triage-list {
@@ -324,10 +343,10 @@
         align-items: center;
         flex-wrap: wrap;
         gap: 0.5rem;
-        padding: 0.5rem;
-        background: #fff;
-        border: 1px solid #e0e0e0;
-        border-radius: 4px;
+        padding: 0.6rem;
+        background: #ffffff;
+        border: 1px solid #c7d3d2;
+        border-radius: 10px;
       }
       .triage-title {
         font-weight: 600;
@@ -339,7 +358,7 @@
       }
       .triage-domain {
         font-size: 0.8rem;
-        color: #666;
+        color: #4b6063;
         flex: none;
       }
       .triage-bucket-buttons,
@@ -350,18 +369,21 @@
       }
       .triage-bucket-button,
       .triage-riffle-button {
-        padding: 0.3rem 0.6rem;
-        border: 1px solid #ccc;
-        border-radius: 4px;
-        background: #fff;
+        padding: 0.35rem 0.8rem;
+        border: 1px solid #c7d3d2;
+        border-radius: 999px;
+        background: #ffffff;
+        color: #16242a;
         cursor: pointer;
       }
       .triage-bucket-button.selected {
-        border-color: #333;
+        border-color: #087e83;
+        background: #e3f3f2;
+        color: #065458;
         font-weight: 700;
       }
       .triage-empty {
-        color: #666;
+        color: #4b6063;
       }
       .triage-footer {
         display: flex;
@@ -373,19 +395,20 @@
         flex: 1 1 auto;
       }
       .triage-confirm {
-        padding: 0.4rem 0.8rem;
-        border: 1px solid #a4321e;
-        border-radius: 4px;
-        background: #a4321e;
-        color: #fff;
+        padding: 0.45rem 0.9rem;
+        border: 1px solid #b3261e;
+        border-radius: 8px;
+        background: #b3261e;
+        color: #ffffff;
         font-weight: 600;
         cursor: pointer;
       }
       .triage-cancel {
-        padding: 0.4rem 0.8rem;
-        border: 1px solid #ccc;
-        border-radius: 4px;
-        background: #fff;
+        padding: 0.45rem 0.9rem;
+        border: 1px solid #c7d3d2;
+        border-radius: 8px;
+        background: #ffffff;
+        color: #16242a;
         cursor: pointer;
       }
       .item-title, .item-domain { overflow-wrap: anywhere; }
@@ -404,60 +427,73 @@
           background: #1a1a1a;
         }
         .loading {
-          color: #aaa;
+          color: #aaaaaa;
         }
         .message {
-          color: #ff6b57;
+          color: #f0b94f;
         }
         .bucket-button {
-          border-color: #555;
+          border-color: #555555;
           background: #2a2a2a;
+          color: #e8e8e8;
         }
         .bucket-button.selected {
-          border-color: #e8e8e8;
+          border-color: #2dd4bf;
+          background: #16302e;
+          color: #bdf2ec;
+        }
+        .bucket-button.stale {
+          border-color: #8a6a2c;
+          color: #e8c267;
+        }
+        .bucket-button.stale.selected {
+          border-color: #d9a033;
+          background: #3a2a12;
+          color: #f0b94f;
         }
         .search-input {
-          border-color: #555;
+          border-color: #555555;
           background: #2a2a2a;
           color: #e8e8e8;
         }
         .banner {
-          border-color: #5c5230;
+          border-color: #8a6a2c;
           background: #332d16;
+          color: #f0b94f;
         }
-        .column {
+        .queue-section {
           background: #242424;
           border-color: #3a3a3a;
-        }
-        .column h2,
-        .stale-header {
-          color: #aaa;
         }
         .item-card {
           border-color: #3a3a3a;
           background: #2a2a2a;
         }
         .item-card.overdue {
-          border-color: #ff6b57;
-          background: #3a1f1a;
+          border-color: #d9a033;
+          background: #3a2a12;
         }
         .item-card:focus {
-          outline-color: #5b9bf7;
+          outline-color: #2dd4bf;
         }
         .favicon-placeholder {
-          background: #555;
+          background: #555555;
         }
         .item-bucket,
         .item-domain,
         .item-meta,
         .item-due {
-          color: #aaa;
+          color: #aaaaaa;
         }
         .item-due {
-          color: #ddd;
+          color: #dddddd;
         }
         .item-card.overdue .item-due {
-          color: #ff6b57;
+          color: #f0b94f;
+        }
+        .item-riffle {
+          color: #cfcfcf;
+          background: #333333;
         }
         .open-tabs-panel,
         .recently-closed-panel,
@@ -467,16 +503,17 @@
         }
         .open-tabs-panel h2,
         .recently-closed-panel h2 {
-          color: #aaa;
+          color: #aaaaaa;
         }
         .recently-closed-toggle {
-          border-color: #555;
+          border-color: #555555;
           background: #2a2a2a;
+          color: #e8e8e8;
         }
         .wash-now-button {
-          border-color: #ff6b57;
+          border-color: #c0392b;
           background: #2a2a2a;
-          color: #ff6b57;
+          color: #e2776b;
         }
         .open-tab-row,
         .closed-tab-row {
@@ -488,50 +525,54 @@
         .closed-tab-time,
         .triage-domain,
         .triage-empty {
-          color: #aaa;
+          color: #aaaaaa;
         }
         .open-tab-cue {
-          color: #ddd;
+          color: #dddddd;
         }
         .triage-bucket-button,
         .triage-riffle-button {
-          border-color: #555;
+          border-color: #555555;
           background: #2a2a2a;
+          color: #e8e8e8;
         }
         .triage-bucket-button.selected {
-          border-color: #e8e8e8;
+          border-color: #2dd4bf;
+          background: #16302e;
+          color: #bdf2ec;
         }
         .triage-confirm {
           border-color: #c0392b;
           background: #c0392b;
-          color: #fff;
+          color: #ffffff;
         }
         .triage-cancel {
-          border-color: #555;
+          border-color: #555555;
           background: #2a2a2a;
+          color: #e8e8e8;
         }
         button,
         select,
         input:not([type="checkbox"]) {
           background: #2a2a2a;
-          border-color: #555;
+          border-color: #555555;
           color: #e8e8e8;
         }
         button:hover {
-          background: #333;
+          background: #333333;
         }
         :focus-visible {
-          outline-color: #5b9bf7;
+          outline-color: #2dd4bf;
         }
         #error,
         [role="alert"] {
-          color: #ff6b57;
+          color: #f0b94f;
         }
         .empty-state {
           background: #242424;
         }
         .keyboard-help {
-          color: #aaa;
+          color: #aaaaaa;
         }
       }
     </style>

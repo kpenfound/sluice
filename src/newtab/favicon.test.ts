@@ -16,4 +16,9 @@ describe("favicon", () => {
     expect(tag).toMatch(/type=["']image\/svg\+xml["']/);
     expect(tag).toMatch(/href=["']icon\.svg["']/);
   });
+
+  test("the linked icon.svg artwork exists and is an SVG", async () => {
+    const svg = await read("../icon.svg");
+    expect(svg).toMatch(/<svg[\s>]/);
+  });
 });

@@ -140,6 +140,7 @@ describe("new tab page light theme: rounded corners", () => {
       ".bucket-button.stale",
       ".search-input",
       ".item-riffle",
+      ".open-tabs-toggle",
       ".recently-closed-toggle",
       ".wash-now-button",
       ".triage-bucket-button",

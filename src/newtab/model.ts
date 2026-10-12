@@ -387,6 +387,21 @@ export function openTabsView(input: OpenTabsViewInput): OpenTabRow[] {
   return rows.map((r) => r.row);
 }
 
+/** What the "Open tabs" panel renders: the row count always, and the rows only when expanded. */
+export interface OpenTabsPanelView {
+  count: number;
+  rows: OpenTabRow[];
+}
+
+/**
+ * Collapses `rows` (already ordered by `openTabsView`) to nothing but a count while the panel is
+ * collapsed, so no title, domain, URL, favicon, cue or Keep open checkbox is ever handed to the
+ * renderer until the panel is expanded.
+ */
+export function openTabsPanelView(rows: OpenTabRow[], expanded: boolean): OpenTabsPanelView {
+  return { count: rows.length, rows: expanded ? rows : [] };
+}
+
 export interface RecentlyClosedViewInput {
   recentlyClosed: ClosedTab[];
   items: Item[];

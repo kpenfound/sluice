@@ -58,17 +58,34 @@ describe("new tab page main-content layout split", () => {
     expect(columnsValue.trim()).toBe("1fr");
   });
 
-  test("the queue section is appended before Recently closed in the renderer, so it stays first and on the left", async () => {
+  test("the queue section is appended before the right column, so it stays first and on the left", async () => {
     const indexTs = await read("index.ts");
     const queueIndex = indexTs.indexOf("renderQueueSection");
-    const closedIndex = indexTs.indexOf("renderRecentlyClosedPanel");
     expect(queueIndex).toBeGreaterThan(-1);
+
+    const queueAppendOrder = indexTs.indexOf("mainContent.append(renderQueueSection");
+    const rightColumnAppendOrder = indexTs.indexOf("mainContent.append(rightColumn)");
+    expect(queueAppendOrder).toBeGreaterThan(-1);
+    expect(rightColumnAppendOrder).toBeGreaterThan(-1);
+    expect(queueAppendOrder).toBeLessThan(rightColumnAppendOrder);
+  });
+
+  test("Open tabs is appended into the right column directly above Recently closed", async () => {
+    const indexTs = await read("index.ts");
+    const openTabsIndex = indexTs.indexOf("renderOpenTabsPanel");
+    const closedIndex = indexTs.indexOf("renderRecentlyClosedPanel");
+    expect(openTabsIndex).toBeGreaterThan(-1);
     expect(closedIndex).toBeGreaterThan(-1);
 
-    const appendOrder = indexTs.indexOf("mainContent.append(renderQueueSection");
-    const closedAppendOrder = indexTs.indexOf("mainContent.append(renderRecentlyClosedPanel");
-    expect(appendOrder).toBeGreaterThan(-1);
+    const openTabsAppendOrder = indexTs.indexOf("rightColumn.append(renderOpenTabsPanel");
+    const closedAppendOrder = indexTs.indexOf("rightColumn.append(renderRecentlyClosedPanel");
+    expect(openTabsAppendOrder).toBeGreaterThan(-1);
     expect(closedAppendOrder).toBeGreaterThan(-1);
-    expect(appendOrder).toBeLessThan(closedAppendOrder);
+    expect(openTabsAppendOrder).toBeLessThan(closedAppendOrder);
+  });
+
+  test("no full-width Open tabs panel is appended directly to the page between the banners and the split", async () => {
+    const indexTs = await read("index.ts");
+    expect(indexTs.indexOf("app.append(renderOpenTabsPanel")).toBe(-1);
   });
 });

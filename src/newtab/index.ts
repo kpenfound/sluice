@@ -13,6 +13,7 @@ import {
   formatDuration,
   keyAction,
   launcherView,
+  openTabsPanelView,
   openTabsView,
   recentlyClosedPanelView,
   recentlyClosedView,
@@ -24,6 +25,7 @@ import type {
   KeyAction,
   LauncherView,
   OpenTabRow,
+  OpenTabsPanelView,
   PauseBanner,
   QueueEntry,
   RecentlyClosedPanelView,
@@ -67,6 +69,13 @@ interface PageState {
    * Amendment 9).
    */
   recentlyClosedExpanded: boolean;
+  /**
+   * Whether the Open tabs panel is expanded. Lives only in this page's own memory, set the same
+   * way as `recentlyClosedExpanded`: false once, on the first load, left untouched by every later
+   * loadData() call, and never written to storage (docs/design.md Amendment 10). Independent of
+   * `recentlyClosedExpanded`.
+   */
+  openTabsExpanded: boolean;
 }
 
 // Null until the first read of buckets, items, pauses, awayGap, trackedTabs and autoCloseAfter
@@ -97,6 +106,7 @@ async function loadData(): Promise<void> {
       searchFocused: false,
       message: null,
       recentlyClosedExpanded: false,
+      openTabsExpanded: false,
     };
   } else {
     state.buckets = buckets;
@@ -452,7 +462,15 @@ function renderWashNowButton(): HTMLElement {
   return button;
 }
 
-function renderOpenTabsPanel(rows: OpenTabRow[]): HTMLElement {
+/**
+ * The "Open tabs" panel: a heading, a native expand/collapse button and the Wash now button,
+ * always. Collapsed (the default on every load, per docs/design.md Amendment 10), the rows are
+ * left out of the DOM entirely, so no title, domain, favicon, remaining-time cue or Keep open
+ * checkbox is ever rendered. The toggle updates `state.openTabsExpanded` and re-renders; its
+ * `aria-expanded` reflects the current state, and being a plain `<button>`, it keeps native
+ * Tab/Enter/Space behavior with no keymap change. Independent of the Recently closed toggle.
+ */
+function renderOpenTabsPanel(panel: OpenTabsPanelView, expanded: boolean): HTMLElement {
   const section = document.createElement("section");
   section.className = "open-tabs-panel";
 
@@ -461,13 +479,30 @@ function renderOpenTabsPanel(rows: OpenTabRow[]): HTMLElement {
   const heading = document.createElement("h2");
   heading.textContent = "Open tabs";
   header.append(heading);
+
+  const toggle = document.createElement("button");
+  toggle.type = "button";
+  toggle.className = "open-tabs-toggle";
+  toggle.setAttribute("aria-expanded", String(expanded));
+  toggle.setAttribute("aria-controls", "open-tabs-list");
+  toggle.textContent = expanded ? "Hide" : `Show (${panel.count})`;
+  toggle.addEventListener("click", () => {
+    if (state === null) return;
+    state.openTabsExpanded = !state.openTabsExpanded;
+    render();
+  });
+  header.append(toggle);
+
   header.append(renderWashNowButton());
   section.append(header);
 
-  const list = document.createElement("div");
-  list.className = "open-tabs-list";
-  for (const row of rows) list.append(renderOpenTabRow(row));
-  section.append(list);
+  if (expanded) {
+    const list = document.createElement("div");
+    list.className = "open-tabs-list";
+    list.id = "open-tabs-list";
+    for (const row of panel.rows) list.append(renderOpenTabRow(row));
+    section.append(list);
+  }
 
   return section;
 }
@@ -706,13 +741,6 @@ function render(): void {
   if (view.pauseBanner !== null) app.append(renderPauseBanner(view.pauseBanner));
   if (view.awayGapBanner !== null) app.append(renderAwayGapBanner(view.awayGapBanner));
 
-  const openTabRows = openTabsView({
-    trackedTabs: state.trackedTabs,
-    autoCloseAfter: state.autoCloseAfter,
-    now: Date.now(),
-  });
-  app.append(renderOpenTabsPanel(openTabRows));
-
   const searching = state.query.trim() !== "";
   let entries: QueueEntry[];
   let showBucketName: boolean;
@@ -735,9 +763,22 @@ function render(): void {
   mainContent.className = "main-content";
   mainContent.append(renderQueueSection(entries, view, showBucketName, emptyMessage));
 
+  const rightColumn = document.createElement("div");
+  rightColumn.className = "right-column";
+
+  const openTabRows = openTabsView({
+    trackedTabs: state.trackedTabs,
+    autoCloseAfter: state.autoCloseAfter,
+    now: Date.now(),
+  });
+  const openTabsPanel = openTabsPanelView(openTabRows, state.openTabsExpanded);
+  rightColumn.append(renderOpenTabsPanel(openTabsPanel, state.openTabsExpanded));
+
   const closedEntries = recentlyClosedView({ recentlyClosed: state.recentlyClosed, items: state.items });
   const closedPanel = recentlyClosedPanelView(closedEntries, state.recentlyClosedExpanded);
-  mainContent.append(renderRecentlyClosedPanel(closedPanel, state.buckets, state.recentlyClosedExpanded));
+  rightColumn.append(renderRecentlyClosedPanel(closedPanel, state.buckets, state.recentlyClosedExpanded));
+
+  mainContent.append(rightColumn);
   app.append(mainContent);
 
   const help = document.createElement("p");

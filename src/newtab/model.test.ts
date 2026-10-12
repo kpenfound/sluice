@@ -9,6 +9,7 @@ import {
   formatDuration,
   keyAction,
   launcherView,
+  openTabsPanelView,
   openTabsView,
   recentlyClosedPanelView,
   recentlyClosedView,
@@ -547,6 +548,34 @@ describe("openTabsView: ordering", () => {
     ];
     const rows = openTabsView({ trackedTabs: tabs, autoCloseAfter: 2 * HOUR, now: NOW });
     expect(rows.map((r) => r.tabId)).toEqual([10, 20]);
+  });
+});
+
+describe("openTabsPanelView", () => {
+  const rows = openTabsView({
+    trackedTabs: [
+      makeTrackedTab({ tabId: 1, inactiveSince: NOW - HOUR }),
+      makeTrackedTab({ tabId: 2, inactiveSince: null }),
+    ],
+    autoCloseAfter: 2 * HOUR,
+    now: NOW,
+  });
+
+  test("collapsed: no rows are handed to the renderer, but the count is still available", () => {
+    const panel = openTabsPanelView(rows, false);
+    expect(panel.rows).toEqual([]);
+    expect(panel.count).toBe(2);
+  });
+
+  test("expanded: every row passes through unchanged, in order", () => {
+    const panel = openTabsPanelView(rows, true);
+    expect(panel.rows).toBe(rows);
+    expect(panel.count).toBe(2);
+  });
+
+  test("count reflects zero rows whether collapsed or expanded", () => {
+    expect(openTabsPanelView([], false)).toEqual({ count: 0, rows: [] });
+    expect(openTabsPanelView([], true)).toEqual({ count: 0, rows: [] });
   });
 });
 

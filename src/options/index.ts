@@ -1,6 +1,5 @@
-// Options page: buckets and pauses. See "Buckets in v1" and "Pause" in
-// docs/design.md. All state and action decisions live in ./model; this file
-// only renders DOM and wires events.
+// Options page: buckets and pauses. All state and action decisions live in
+// ./model; this file only renders DOM and wires events.
 import type { Bucket } from "../lib/model";
 import { createStore } from "../lib/store";
 import {

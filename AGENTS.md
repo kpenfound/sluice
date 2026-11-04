@@ -18,6 +18,10 @@
 | `src/options/` | The options page (buckets, pauses, settings) |
 | `src/lib/` | Code shared by the entry points: the data model, due-time math, URL normalization and the storage module |
 | `scripts/build.mjs` | Bundles each entry point with esbuild and copies the manifest and HTML into `dist/` |
+| `scripts/release.mjs` | Validates, versions, builds and submits a listed AMO release |
+| `scripts/package-source.mjs`, `scripts/source-README.md` | Package the release source and its reviewer build instructions |
+| `scripts/amo-metadata.json` | Machine-readable AMO listing metadata sent with each release |
+| `docs/listing.md`, `docs/release.md` | Listing copy, permissions, privacy, owner checklist and release smoke checks |
 | `.dagger/modules/sluice/` | The Dagger module behind `dagger check` |
 
 Each entry point is `src/<name>/index.ts`; pages also have `src/<name>/index.html`, which loads `<name>.js`. A new entry point needs a line in `scripts/build.mjs` and the manifest.
@@ -57,7 +61,7 @@ Each entry point is `src/<name>/index.ts`; pages also have `src/<name>/index.htm
 - Keep changes focused. Avoid unrelated refactors, generated churn and dependencies without a concrete need.
 - Keep `package-lock.json` and `dagger.lock` consistent with dependency changes, and commit them.
 - Keep build output (`dist/`, `web-ext-artifacts/`), credentials and AMO API keys out of version control. Reference secrets through environment variables.
-- Update documentation with user-visible behavior and configuration changes. Keep the README concise while the extension is under construction.
+- Update documentation with user-visible behavior and configuration changes. Keep the README concise.
 
 ## Comments and documentation
 

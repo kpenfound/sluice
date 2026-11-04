@@ -1,11 +1,12 @@
-// Bumps the version and signs an unlisted .xpi. Usage: npm run release [patch|minor|major].
+// Bumps the version and submits for AMO review. Usage: npm run release [patch|minor|major].
 import { execFileSync } from "node:child_process";
-import { readdir, readFile, stat, writeFile } from "node:fs/promises";
-import path from "node:path";
+import { readFile, writeFile } from "node:fs/promises";
+import { packageSource } from "./package-source.mjs";
 
 const VALID_KINDS = ["patch", "minor", "major"];
 const SNAPSHOT_FILES = ["package.json", "package-lock.json", "src/manifest.json"];
 const ARTIFACTS_DIR = "web-ext-artifacts";
+const METADATA_FILE = "scripts/amo-metadata.json";
 
 function fail(message) {
   console.error(message);
@@ -23,6 +24,9 @@ if (!process.env.WEB_EXT_API_KEY || !process.env.WEB_EXT_API_SECRET) {
   );
 }
 
+// Catch missing or malformed listing material before changing any version file.
+JSON.parse(await readFile(METADATA_FILE, "utf8"));
+
 const snapshots = new Map();
 for (const file of SNAPSHOT_FILES) {
   snapshots.set(file, await readFile(file, "utf8"));
@@ -38,11 +42,11 @@ function run(command, args) {
   execFileSync(command, args, { stdio: "inherit" });
 }
 
-// Validate the exact source being released before changing any version files.
-run("dagger", ["check", "--progress=report"]);
-
 let version;
 try {
+  // Validate the exact source being released before changing any version files.
+  run("dagger", ["check", "--progress=report"]);
+
   const versionOutput = execFileSync("npm", ["version", kind, "--no-git-tag-version"], {
     encoding: "utf8",
   }).trim();
@@ -53,10 +57,16 @@ try {
   await writeFile("src/manifest.json", `${JSON.stringify(manifest, null, 2)}\n`);
 
   run("npm", ["run", "build"]);
+  const sourcePackage = await packageSource(version, ARTIFACTS_DIR);
   run("npx", [
     "web-ext",
     "sign",
-    "--channel=unlisted",
+    "--channel=listed",
+    "--amo-metadata",
+    METADATA_FILE,
+    "--upload-source-code",
+    sourcePackage,
+    "--approval-timeout=0",
     "--source-dir",
     "dist",
     "--artifacts-dir",
@@ -67,20 +77,4 @@ try {
   fail(`Release failed, restored previous version: ${error.message}`);
 }
 
-const artifacts = await readdir(ARTIFACTS_DIR);
-const xpiFiles = await Promise.all(
-  artifacts
-    .filter((name) => name.endsWith(".xpi"))
-    .map(async (name) => {
-      const filePath = path.join(ARTIFACTS_DIR, name);
-      return { filePath, mtime: (await stat(filePath)).mtimeMs };
-    }),
-);
-xpiFiles.sort((a, b) => b.mtime - a.mtime);
-
-console.log(`Released version ${version}`);
-if (xpiFiles.length > 0) {
-  console.log(`Signed .xpi: ${xpiFiles[0].filePath}`);
-} else {
-  console.log(`Signed .xpi in ${ARTIFACTS_DIR}/`);
-}
+console.log(`Version ${version} submitted and awaiting AMO review.`);

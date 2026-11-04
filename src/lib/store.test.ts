@@ -1,4 +1,4 @@
-import { describe, expect, test } from "vitest";
+import { describe, expect, test, vi } from "vitest";
 import { createStore } from "./store";
 import type { StorageChange, StorageNamespace } from "./store";
 import type { Item } from "./model";
@@ -99,9 +99,13 @@ function makeTrackedTab(overrides: Partial<TrackedTab> = {}): TrackedTab {
 
 describe("getItems and getPauses", () => {
   test("return [] when their key is absent", async () => {
-    const { store } = createTestStore();
+    const { storage, store } = createTestStore();
+    const write = vi.spyOn(storage.local, "set");
     expect(await store.getItems()).toEqual([]);
     expect(await store.getPauses()).toEqual([]);
+    expect(write).not.toHaveBeenCalled();
+    expect(storage.peek("items")).toBeUndefined();
+    expect(storage.peek("pauses")).toBeUndefined();
   });
 
   test("read from their own separate keys", async () => {
@@ -117,29 +121,33 @@ describe("getItems and getPauses", () => {
 });
 
 describe("getBuckets", () => {
-  test("seeds and persists the three default buckets when the key is absent", async () => {
+  test("seeds and persists exactly one Default bucket when the key is absent", async () => {
     const { storage, store } = createTestStore();
     const buckets = await store.getBuckets();
     expect(buckets).toEqual([
-      { id: "id-0", name: "Dagger", order: 0 },
-      { id: "id-1", name: "Side projects", order: 1 },
-      { id: "id-2", name: "Personal", order: 2 },
+      { id: "id-0", name: "Default", order: 0 },
     ]);
     expect(storage.peek("buckets")).toEqual(buckets);
   });
 
   test("a second read doesn't duplicate the defaults", async () => {
-    const { store } = createTestStore();
+    const { storage, store } = createTestStore();
     const first = await store.getBuckets();
+    const write = vi.spyOn(storage.local, "set");
     const second = await store.getBuckets();
     expect(second).toEqual(first);
+    expect(write).not.toHaveBeenCalled();
   });
 
   test("reads from its own key, separate from items and pauses", async () => {
     const storage = new FakeStorage();
     await storage.local.set({ buckets: [{ id: "b1", name: "Work", order: 0 }] });
     const { store } = createTestStore(storage);
+    const storedBuckets = storage.peek("buckets");
+    const write = vi.spyOn(storage.local, "set");
     expect(await store.getBuckets()).toEqual([{ id: "b1", name: "Work", order: 0 }]);
+    expect(storage.peek("buckets")).toBe(storedBuckets);
+    expect(write).not.toHaveBeenCalled();
     expect(await store.getItems()).toEqual([]);
     expect(await store.getPauses()).toEqual([]);
   });
@@ -150,8 +158,8 @@ describe("addBucket", () => {
     const { store } = createTestStore();
     await store.getBuckets();
     const added = await store.addBucket("Reading");
-    expect(added).toEqual({ id: "id-3", name: "Reading", order: 3 });
-    expect(await store.getBuckets()).toHaveLength(4);
+    expect(added).toEqual({ id: "id-1", name: "Reading", order: 1 });
+    expect(await store.getBuckets()).toHaveLength(2);
   });
 
   test("trims the name", async () => {
@@ -161,9 +169,12 @@ describe("addBucket", () => {
   });
 
   test("rejects an empty or whitespace-only name", async () => {
-    const { store } = createTestStore();
+    const { storage, store } = createTestStore();
+    const write = vi.spyOn(storage.local, "set");
     await expect(store.addBucket("")).rejects.toThrow();
     await expect(store.addBucket("   ")).rejects.toThrow();
+    expect(write).not.toHaveBeenCalled();
+    expect(storage.peek("buckets")).toBeUndefined();
   });
 });
 
@@ -182,10 +193,14 @@ describe("renameBucket", () => {
   });
 
   test("rejects an empty or whitespace-only name", async () => {
-    const { store } = createTestStore();
+    const { storage, store } = createTestStore();
     const [bucket] = await store.getBuckets();
+    const before = storage.peek("buckets");
+    const write = vi.spyOn(storage.local, "set");
     await expect(store.renameBucket(bucket!.id, "")).rejects.toThrow();
     await expect(store.renameBucket(bucket!.id, "   ")).rejects.toThrow();
+    expect(storage.peek("buckets")).toBe(before);
+    expect(write).not.toHaveBeenCalled();
   });
 });
 
@@ -200,7 +215,7 @@ describe("concurrent writes", () => {
 
     expect(a.order).not.toBe(b.order);
     const buckets = await store.getBuckets();
-    expect(buckets).toHaveLength(5);
+    expect(buckets).toHaveLength(3);
     expect(buckets.map((bucket) => bucket.name)).toEqual(
       expect.arrayContaining(["Alpha", "Beta"]),
     );
@@ -267,7 +282,7 @@ describe("addItem", () => {
     });
 
     expect(item).toEqual({
-      id: "id-3",
+      id: "id-1",
       url: "https://example.com/post?utm_source=x",
       normUrl: "https://example.com/post",
       title: "Example",
@@ -306,7 +321,8 @@ describe("addItem", () => {
 
   test("re-adding an already-queued URL moves it instead of duplicating it", async () => {
     const { clock, store } = createTestStore();
-    const [bucketA, bucketB] = await store.getBuckets();
+    const [bucketA] = await store.getBuckets();
+    const bucketB = await store.addBucket("Work");
     const original = await store.addItem({
       url: "https://example.com/post",
       title: "Example",
@@ -385,7 +401,7 @@ describe("deferItem", () => {
   });
 
   test("is a no-op on a stale item", async () => {
-    const { store } = createTestStore();
+    const { storage, store } = createTestStore();
     const [bucket] = await store.getBuckets();
     const item = await store.addItem({
       url: "https://example.com",
@@ -394,8 +410,12 @@ describe("deferItem", () => {
       riffle: "stale",
     });
 
+    const before = storage.peek("items");
+    const write = vi.spyOn(storage.local, "set");
     const deferred = await store.deferItem(item.id);
     expect(deferred).toEqual(item);
+    expect(storage.peek("items")).toBe(before);
+    expect(write).not.toHaveBeenCalled();
   });
 });
 
@@ -431,7 +451,8 @@ describe("moveItem", () => {
 describe("changeBucket", () => {
   test("changes only bucketId, leaving riffle and timestamps unchanged", async () => {
     const { store } = createTestStore();
-    const [bucketA, bucketB] = await store.getBuckets();
+    const [bucketA] = await store.getBuckets();
+    const bucketB = await store.addBucket("Work");
     const item = await store.addItem({
       url: "https://example.com",
       title: "Example",
@@ -512,7 +533,8 @@ describe("recordVisit", () => {
 describe("item actions while overdue or paused", () => {
   test("every action succeeds on an item long past its riffle's TTL", async () => {
     const { clock, store } = createTestStore();
-    const [bucketA, bucketB] = await store.getBuckets();
+    const [bucketA] = await store.getBuckets();
+    const bucketB = await store.addBucket("Work");
     const item = await store.addItem({
       url: "https://example.com/overdue",
       title: "Example",
@@ -538,7 +560,8 @@ describe("item actions while overdue or paused", () => {
 
   test("every action succeeds with a running pause seeded in storage", async () => {
     const { storage, clock, store } = createTestStore();
-    const [bucketA, bucketB] = await store.getBuckets();
+    const [bucketA] = await store.getBuckets();
+    const bucketB = await store.addBucket("Work");
     await storage.local.set({ pauses: [{ id: "p1", start: clock.now() - 1_000, end: null }] });
     const item = await store.addItem({
       url: "https://example.com/paused",
@@ -1694,23 +1717,24 @@ describe("storage shared across extension contexts", () => {
   test("a rejected transaction releases the lock for another context", async () => {
     const { popup, background } = contexts();
     await expect(popup.renameBucket("missing", "Name")).rejects.toThrow();
-    expect(await background.getBuckets()).toHaveLength(3);
+    expect(await background.getBuckets()).toHaveLength(1);
   });
 });
 
 test("capture remembers the bucket and removes recently closed copies before resolve", async () => {
   const { store } = createTestStore();
-  const buckets = await store.getBuckets();
+  await store.getBuckets();
+  const bucket = await store.addBucket("Work");
   await store.trackTab(makeTrackedTab());
   await store.recordTabClosed(1);
   expect(await store.getRecentlyClosed()).toHaveLength(1);
   const item = await store.addItem({
     url: "https://example.com/?utm_source=capture",
     title: "Example",
-    bucketId: buckets[1]!.id,
+    bucketId: bucket.id,
     riffle: "72h",
   });
-  expect(await store.getLastBucketId()).toBe(buckets[1]!.id);
+  expect(await store.getLastBucketId()).toBe(bucket.id);
   expect(await store.getRecentlyClosed()).toEqual([]);
   await store.resolveItem(item.id);
   expect(await store.getRecentlyClosed()).toEqual([]);

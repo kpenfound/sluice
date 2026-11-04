@@ -64,4 +64,4 @@ export function nextRiffle(riffle: RiffleId): RiffleId | null {
   return next ?? null;
 }
 
-export const DEFAULT_BUCKET_NAMES = ["Dagger", "Side projects", "Personal"];
+export const DEFAULT_BUCKET_NAMES = ["Default"];

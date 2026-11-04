@@ -1,5 +1,6 @@
 import type { Bucket, Pause } from "../lib/model";
 import { runningPause } from "../lib/pauses";
+import type { AddPauseInput, EditPauseInput, Store } from "../lib/store";
 
 const MINUTE_MS = 60 * 1000;
 
@@ -103,6 +104,41 @@ export function parsePauseForm(form: PauseFormInput, now: number): ParsePauseFor
 
   const label = form.label.trim();
   return { ok: true, input: { start, end, ...(label !== "" ? { label } : {}) } };
+}
+
+/** A full form edit explicitly clears a blank label instead of preserving the stored label. */
+export function pauseEditPatch(input: AddPauseInput): EditPauseInput {
+  return { ...input, label: input.label ?? null };
+}
+
+export interface PauseEditUI {
+  editingId(): string | null;
+  setEditingId(id: string | null): void;
+  setError(error: string | null): void;
+  refresh(): Promise<void>;
+}
+
+/** Saves the edit and refreshes display mode even when storage already refreshed the form. */
+export async function savePauseEdit(
+  store: Pick<Store, "editPause">,
+  id: string,
+  input: AddPauseInput,
+  ui: PauseEditUI,
+): Promise<void> {
+  ui.setError(null);
+  try {
+    await store.editPause(id, pauseEditPatch(input));
+  } catch (error) {
+    if (ui.editingId() === id) {
+      ui.setError(error instanceof Error ? error.message : String(error));
+      await ui.refresh();
+    }
+    return;
+  }
+  if (ui.editingId() === id) {
+    ui.setEditingId(null);
+    await ui.refresh();
+  }
 }
 
 /** Formats an epoch millisecond timestamp as a `datetime-local` input value, for pre-filling an edit form. */

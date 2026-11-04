@@ -1,0 +1,13 @@
+{
+  "categories": ["tabs"],
+  "summary": {
+    "en-US": "Make every tab disposable: queue pages to revisit, replace your new tab page with a launcher, and auto-close inactive tabs after two hours by default."
+  },
+  "description": {
+    "en-US": "Sluice replaces your new tab page with a launcher and closes inactive web tabs after two hours by default. Change the timeout in Settings; active tabs, tabs playing audio and tabs marked Keep open are protected.\n\nQueue pages for 24 hours, 72 hours, one week or one month. Visits reset their timers; overdue pages stay queued until you act. Defer, move, search or resolve items, and pause queue deadlines while away. Start with one Default bucket and rename it or add buckets in Settings.\n\nWash lets you file pages before closing tabs across normal windows. Recently closed keeps unqueued web pages for up to seven days or 100 entries so you can reopen or file them. Open tabs and Recently closed start collapsed. Private windows are untouched.\n\nYour queues and settings stay in this Firefox profile. Sluice has no telemetry, sync or page-content access. Favicons may load from the sites that supplied them. Firefox 142 or later is required."
+  },
+  "version": {
+    "license": "MIT",
+    "approval_notes": "Bundled with esbuild. The attached source archive contains README.md with build instructions: Node 24, npm 11, npm ci, npm run build. Output is dist/. No credentials or container tools are needed. Sluice replaces the new tab page and auto-closes inactive HTTP(S) tabs after two hours by default; Settings changes the timeout. Data collection is declared as none."
+  }
+}

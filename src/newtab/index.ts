@@ -9,6 +9,7 @@ import { ENQUEUE_RIFFLES, RIFFLES } from "../lib/model";
 import { createStore } from "../lib/store";
 import type { WashTab } from "../lib/wash";
 import { WASH_MESSAGE_TYPE } from "../lib/wash";
+import { captureBucketId, captureTriage, fileClosed, triageBucketChoice } from "./actions";
 import {
   formatDuration,
   keyAction,
@@ -562,6 +563,7 @@ function renderClosedRow(entry: ClosedTab, buckets: Bucket[]): HTMLElement {
     option.textContent = bucket.name;
     bucketSelect.append(option);
   }
+  bucketSelect.value = captureBucketId(buckets);
   div.append(bucketSelect);
 
   const riffleSelect = document.createElement("select");
@@ -580,16 +582,7 @@ function renderClosedRow(entry: ClosedTab, buckets: Bucket[]): HTMLElement {
   fileButton.type = "button";
   fileButton.textContent = "File";
   fileButton.addEventListener("click", () => {
-    void runAction(async () => {
-      await store.addItem({
-        url: entry.url,
-        title: entry.title,
-        favIconUrl: entry.favIconUrl,
-        bucketId: bucketSelect.value,
-        riffle: riffleSelect.value as RiffleId,
-      });
-      await store.removeClosed(entry.id);
-    });
+    void runAction(() => fileClosed(store, entry, bucketSelect.value, riffleSelect.value as RiffleId));
   });
   div.append(fileButton);
 
@@ -1009,7 +1002,7 @@ async function runTriageAction(fn: () => Promise<unknown>): Promise<void> {
 
 /** The bucket a row's selector currently shows: its own stored choice, else `defaultBucketId`. */
 function bucketChoiceForRow(row: TriageRow, view: TriageView): string {
-  return triageState?.bucketChoices.get(row.tabId) ?? view.defaultBucketId ?? "";
+  return triageBucketChoice(row, view, triageState?.bucketChoices);
 }
 
 function renderTriageRow(row: TriageRow, view: TriageView): HTMLElement {
@@ -1055,13 +1048,7 @@ function renderTriageRow(row: TriageRow, view: TriageView): HTMLElement {
     button.textContent = riffle;
     button.addEventListener("click", () => {
       void runTriageAction(() =>
-        store.addItem({
-          url: row.url,
-          title: row.title,
-          favIconUrl: row.favIconUrl,
-          bucketId: bucketChoiceForRow(row, view),
-          riffle,
-        }),
+        captureTriage(store, row, bucketChoiceForRow(row, view), riffle),
       );
     });
     riffleButtons.append(button);

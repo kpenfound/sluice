@@ -43,8 +43,8 @@ describe("TTL", () => {
 });
 
 describe("DEFAULT_BUCKET_NAMES", () => {
-  test("is the three fresh-install buckets Dagger, Side projects and Personal, in that order", () => {
-    expect(DEFAULT_BUCKET_NAMES).toEqual(["Dagger", "Side projects", "Personal"]);
+  test("is the single fresh-install bucket Default", () => {
+    expect(DEFAULT_BUCKET_NAMES).toEqual(["Default"]);
   });
 });
 

@@ -28,7 +28,7 @@ Bookmarks and read-later tools don't fix this. They keep things forever, nothing
 
 |Term|Meaning|
 |---|---|
-|Bucket|A workspace for one area of life, such as Dagger, Side projects, or Personal. Each bucket has its own set of riffles.|
+|Bucket|A workspace for one area of life, such as work or home. Each bucket has its own set of riffles.|
 |Riffle|A fixed queue inside a bucket. Each riffle has a TTL.|
 |Item|A queued URL. It lives in exactly one bucket and one riffle.|
 |Overdue|An item whose TTL has run out since its last visit or its last move.|
@@ -136,7 +136,7 @@ Each item shows two ages in the UI. Both use wall-clock time. Only the overdue s
 2. A popup opens with the bucket and riffle already filled in. The riffle choices are 24h, 72h, 1w and 1mo; 72h is the default. The default bucket is the last one I used. Stale is never an enqueue choice: an item reaches Stale only by a Defer from 1mo or by a Move.
 3. Press Enter to save, or change either field first.
 
-Proposed for v1 or later: domain rules that pick the bucket automatically, for example `github.com/dagger/*` goes to Dagger.
+Proposed for v1 or later: domain rules that pick the bucket automatically, for example `example.com/work/*` goes to work.
 
 ### Revisit
 
@@ -180,7 +180,7 @@ Sluice uses ranges. A retroactive pause is just a range with a start in the past
 - **Edit and delete.** A pauses list on the options page shows every range.
 - Adding items, visiting, deferring, moving, and resolving all keep working while paused.
 - Stale items have no TTL, so pauses don't affect them.
-- Pauses are global. Per-bucket pauses, such as ignoring Dagger on weekends, are a possible later addition. A `bucketIds` field on `Pause` would support them.
+- Pauses are global. Per-bucket pauses, such as ignoring work on weekends, are a possible later addition. A `bucketIds` field on `Pause` would support them.
 
 ### Catching a forgotten pause
 
@@ -291,15 +291,15 @@ TypeScript bundled with esbuild, and `web-ext` for running, linting, and signing
 
 ### Buckets in v1
 
-Sluice ships with three default buckets: Dagger, Side projects, Personal. A basic options page allows renaming and adding buckets. The riffle ladder is not configurable.
+Sluice ships with one default bucket named Default. A basic options page allows renaming and adding buckets. The riffle ladder is not configurable.
 
 ## Development and distribution
 
 - Develop with `web-ext run`, which loads a temporary add-on and reloads on file changes.
 - Set `browser_specific_settings.gecko.id` in the manifest, such as `sluice@<domain>`.
-- Sign with `web-ext sign --channel=unlisted` using AMO API keys. The extension doesn't appear on AMO.
-- Install the signed `.xpi` by dragging it into Firefox.
-- Every release needs a version bump and a re-sign. A single script handles both.
+- Sluice is publicly listed on addons.mozilla.org (AMO). Users install it from AMO, and Firefox delivers updates.
+- Each release bumps the version and submits with `web-ext sign --channel=listed` using AMO API keys, listing metadata and a source package that rebuilds the bundled extension. A single script handles the release.
+- AMO reviews and signs each listed version. An accepted submission awaiting review is a successful release; the release script does not wait for approval.
 
 ## Later
 
@@ -335,3 +335,4 @@ Sluice ships with three default buckets: Dagger, Side projects, Personal. A basi
 8. **Automatic weekend pause.** The options page's Pauses section has a "Pause automatically on weekends" checkbox, off by default, stored through the storage module like any other setting. A weekend runs from Saturday 00:00 to the following Monday 00:00 in local time; both boundaries are local midnights, so a weekend crossing a daylight-saving change is 47 or 49 hours, not a fixed 48. With the setting on, the once-a-minute background alarm records each weekend it covers as a pause from that Saturday 00:00 to that Monday 00:00, labelled "Weekend" unless it merges into an existing pause that already has a label, written through the same validate-and-merge pause write path as any other pause, before the badge is recomputed. A weekend missed while Firefox was closed, including several in a row, is recorded in full the next time the background script runs, as long as the setting covered it. Turning the setting on during a weekend covers that weekend from its Saturday 00:00 start; a weekend that ended before the setting was turned on is never recorded. Resume ends a recorded weekend pause early like any manual one, and editing or deleting a recorded weekend pause is kept — Sluice never re-creates or re-extends a weekend it has already recorded, though the following weekend is still paused as normal. Turning the setting off stops future recording but leaves every already-stored pause exactly as it is, including one running now, which the user ends with Resume.
 9. **Recently closed starts collapsed.** The launcher's Recently closed panel loads collapsed on every page load, so a screen share doesn't reveal recently closed tabs by default. Collapsed, it stays in its usual place in the layout and shows only its "Recently closed" heading and an expand/collapse button; no entry title, domain, URL, favicon, close time or row control is rendered. The button works by mouse and keyboard and reports its state via `aria-expanded`. Activating it shows the list exactly as before (Reopen, bucket/riffle selects, File, and the empty-list hint), and activating it again collapses the panel. Whether the panel is expanded lives only in that launcher page's own memory for as long as the page stays open — it survives the page's own storage-change reloads, the once-a-minute refresh and in-page actions — and is never written to storage. Every other launcher tab, and this tab after a reload, always starts collapsed.
 10. **Open tabs starts collapsed.** The launcher's Open tabs panel moved into the right-hand section of the main content split, directly above Recently closed, and loads collapsed on every page load, the same as Recently closed (Amendment 9). Collapsed, it stays in its place and shows only its "Open tabs" heading, an expand/collapse button and the existing Wash now button, which stays visible and working in both states; no row — title, domain, favicon, remaining-time cue or Keep open checkbox — is rendered. The button works by mouse and keyboard and reports its state via `aria-expanded`. Activating it shows the list exactly as before, and activating it again collapses the panel. Whether it is expanded lives only in that launcher page's own memory for as long as the page stays open — it survives the page's own storage-change reloads, the once-a-minute refresh and in-page actions — and is never written to storage. Every other launcher tab, and this tab after a reload, always starts collapsed. Open tabs and Recently closed expand and collapse independently.
+11. **Public listing and default bucket.** Sluice is publicly listed on addons.mozilla.org (AMO), with releases submitted through `web-ext sign --channel=listed`, including listing metadata and a rebuildable source package. AMO reviews and signs releases, and Firefox delivers updates to users. A new profile starts with exactly one bucket named Default. The options page renames and adds buckets. Renaming preserves bucket identity, items and the remembered selection, and the new name appears wherever the bucket is shown. Existing profiles keep their stored buckets unchanged.

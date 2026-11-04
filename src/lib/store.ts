@@ -54,7 +54,10 @@ export interface AddPauseInput {
 }
 
 /** Fields `editPause` may change on an existing pause. */
-export type EditPauseInput = Partial<Pick<Pause, "start" | "end" | "label">>;
+export type EditPauseInput = Partial<Pick<Pause, "start" | "end">> & {
+  /** Null clears the label; omission leaves it unchanged. */
+  label?: string | null;
+};
 
 /** Fields `updateTrackedTab` may change on a tracked tab. */
 export type UpdateTrackedTabInput = Partial<Pick<TrackedTab, "url" | "title" | "favIconUrl" | "windowId">>;
@@ -407,7 +410,10 @@ export function createStore(storage: StorageNamespace, options: StoreOptions = {
       const pauses = current ?? [];
       const existing = pauses.find((p) => p.id === id);
       if (existing === undefined) throw new Error(`Unknown pause: ${id}`);
-      const updated: Pause = { ...existing, ...patch };
+      const { label, ...range } = patch;
+      const updated: Pause = { ...existing, ...range };
+      if (label === null) delete updated.label;
+      else if (label !== undefined) updated.label = label;
       return mergeWrite(pauses, updated, id);
     });
   }

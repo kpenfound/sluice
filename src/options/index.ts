@@ -9,6 +9,7 @@ import {
   parseAutoCloseMinutes,
   parsePauseForm,
   pauseRows,
+  savePauseEdit,
   toDateTimeLocal,
   validBucketName,
 } from "./model";
@@ -20,6 +21,7 @@ const app = document.getElementById("app")!;
 // Which pause row (if any) is showing its inline edit form. Local UI state,
 // not store state, so it survives a re-render triggered by some other write.
 let editingPauseId: string | null = null;
+let pauseEditError: string | null = null;
 
 function showError(err: unknown): void {
   let message = document.getElementById("error");
@@ -205,6 +207,8 @@ function renderPauseEditForm(list: HTMLElement, row: PauseRow): void {
   li.append(fieldset);
 
   const message = document.createElement("p");
+  message.textContent = pauseEditError;
+  message.setAttribute("role", "alert");
 
   const saveButton = document.createElement("button");
   saveButton.type = "button";
@@ -216,9 +220,12 @@ function renderPauseEditForm(list: HTMLElement, row: PauseRow): void {
       return;
     }
     message.textContent = "";
-    store.editPause(row.id, result.input).catch((err: unknown) => {
-      message.textContent = errorMessage(err);
-    });
+    void savePauseEdit(store, row.id, result.input, {
+      editingId: () => editingPauseId,
+      setEditingId: (id) => { editingPauseId = id; },
+      setError: (error) => { pauseEditError = error; },
+      refresh: renderApp,
+    }).catch(showError);
   });
   li.append(saveButton);
 
@@ -255,6 +262,7 @@ function renderPauseRow(list: HTMLElement, row: PauseRow): void {
   editButton.textContent = "Edit";
   editButton.addEventListener("click", () => {
     editingPauseId = row.id;
+    pauseEditError = null;
     void renderApp().catch(showError);
   });
   li.append(editButton);
